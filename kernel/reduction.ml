@@ -183,10 +183,13 @@ let sort_cmp pb s0 s1 cuniv =
         if c1 = c2 then cuniv else raise NotConvertible
     | (Prop c1, Type u) when pb = CUMUL -> assert (is_univ_variable u); cuniv
     | (Type u1, Type u2) ->
+        cuniv
+(*
 	assert (is_univ_variable u2);
 	(match pb with
            | CONV -> enforce_eq u1 u2 cuniv
 	   | CUMUL -> enforce_geq u2 u1 cuniv)
+*)
     | (_, _) -> raise NotConvertible
 
 
