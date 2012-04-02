@@ -34,6 +34,7 @@ type pretype_error =
   | CannotGeneralize of constr
   | NoOccurrenceFound of constr * identifier option
   | CannotFindWellTypedAbstraction of constr * constr list
+  | CannotFindAbstraction of Evd.evar_map * constr * constr list * string
   | AbstractionOverMeta of name * name
   | NonLinearUnification of name * constr
   (* Pretyping *)
@@ -177,6 +178,9 @@ let error_cannot_coerce env sigma (m,n) =
 
 let error_cannot_find_well_typed_abstraction env sigma p l =
   raise (PretypeError (env_ise sigma env,CannotFindWellTypedAbstraction (p,l)))
+
+let error_cannot_find_abstraction env sigma c l msg =
+  raise (PretypeError (env_ise sigma env,CannotFindAbstraction (sigma,c,l,msg)))
 
 let error_abstraction_over_meta env sigma hdmeta metaarg =
   let m = Evd.meta_name sigma hdmeta and n = Evd.meta_name sigma metaarg in

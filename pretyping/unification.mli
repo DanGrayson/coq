@@ -52,3 +52,6 @@ val w_coerce_to_type : env -> evar_map -> constr -> types -> types ->
 (* (exported for inv.ml) *)
 val abstract_list_all :
   env -> evar_map -> constr -> constr -> constr list -> constr
+
+
+val abstract_list_search_warning : (env -> evar_map -> Term.constr list -> unit) ref

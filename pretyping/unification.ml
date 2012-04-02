@@ -28,6 +28,109 @@ open Retyping
 open Coercion.Default
 open Recordops
 
+let rec take n x = 
+  if n = 0 then [] else
+  match x with
+    [] -> raise Not_found
+  | e::x -> e::(take (n-1) x)
+
+let rec last x = match x with 
+    |    [] -> error "internal error: empty list"
+    |   [e] -> e
+    |  _::x -> last x
+
+let all_but_last x = List.rev (List.tl (List.rev x))
+
+let is_well_typed env evd t = try ignore(Typing.type_of env evd t); true with Type_errors.TypeError _ -> false
+
+let meta_name evd mv =
+  match find_meta evd mv with
+    | Cltyp(na,_) -> na
+    | Clval(na,_,_) -> na
+
+let abstract_metas evd mvs t = List.fold_right
+    (fun mv t -> 
+      mkLambda( meta_name evd mv, Typing.meta_type evd mv, replace_term (mkMeta mv) (mkRel 1) t))
+    mvs t
+
+let occurrence_count term subterm = 
+  let n = ref 0 in 
+  let rec f c = if eq_constr subterm c then incr n else iter_constr f c in
+  iter_constr f term;
+  !n
+
+let subsets n =
+  assert (n >= 0);
+  let rec subsets n =
+    if n = 0 then [[]]
+    else
+      let m = n-1 in
+      let s = subsets m in
+      List.append s (List.map (fun t -> m :: t) s) in
+  List.map List.rev (subsets n)
+let cartprod2 x y = List.flatten (List.map (fun t -> List.map (fun u -> t::u) y) x)
+let cartprod z = List.fold_right cartprod2 z [[]]
+let subsetsn l = cartprod (List.map subsets l)
+
+let replace_term_occ occs c by_c in_t =
+  let ctr = ref 0 in
+  let rec f x = (
+    if eq_constr c x
+    then (
+      let x' = if List.mem !ctr occs then by_c else x in
+      incr ctr;
+      x'
+     )
+    else map_constr f x    
+   ) in
+  f in_t
+
+let select f x =
+  let rec select f = function
+    | [] -> []
+    | a::x -> if f a then a :: select f x else select f x in
+  select f x
+
+let abstract_list_search_warning = ref (function (env:env) -> function (evd:evar_map) -> function (survivors:constr list) -> assert false)
+
+let always_search = true		(* true for development, false for production *)
+
+let abstract_list_search env evd2 typ c l =
+  let c_orig = c in
+  let l_orig = l in
+  let elimA = List.rev (take (List.length l) (List.map fst (meta_list evd2))) in
+  let k = last l in
+  let l = all_but_last l in
+  let psvar = all_but_last elimA in
+  let evd = List.fold_right meta_unassign psvar evd2 in
+  let psvalpairs = List.map (fun mv -> (mv,meta_value evd2 mv)) psvar in
+  let ispsval t =
+    let rec f = function [] -> None | (mv,v)::rest -> if eq_constr t v then Some mv else f rest in
+    f psvalpairs in
+  let c = replace_term k (mkMeta (last elimA)) c in
+  let c = 
+    let rec f t = match ispsval t with Some mv -> mkMeta mv | None -> map_constr f t in
+    map_constr f c in
+  let psvargoalcount = List.map (occurrence_count c) (List.map mkMeta psvar) in
+  let totcount = List.fold_right (+) psvargoalcount 0 in
+  if totcount > 16 then error_cannot_find_abstraction env evd2 c_orig l_orig "attempted, more than 16 replacement spots";
+  let psvaroccs = subsetsn psvargoalcount in
+  let possibilities = List.map
+      (fun occlist -> List.fold_right2 (fun occ (mv,vl) goal -> replace_term_occ occ (mkMeta mv) vl goal) occlist psvalpairs c)
+      psvaroccs in
+  let survivors = select (is_well_typed env evd) possibilities in
+  let survivors = List.map (abstract_metas evd elimA) survivors in
+  begin
+    match List.length survivors with
+      0 -> error_cannot_find_abstraction env evd2 c_orig l_orig "possible"
+    | 1 -> ()
+    | _ -> !abstract_list_search_warning env evd2 survivors
+  end;
+  let p = List.hd survivors in
+  if is_conv_leq env evd2 (Typing.type_of env evd2 p) typ
+  then p
+  else error "internal error: abstraction not convertible?"
+
 let occur_meta_or_undefined_evar evd c =
   let rec occrec c = match kind_of_term c with
     | Meta _ -> raise Occur
@@ -930,7 +1033,8 @@ let secondOrderAbstraction env flags allow_K typ (p, oplist) evd =
   let (evd',cllist) =
     w_unify_to_subterm_list env flags allow_K p oplist typ evd in
   let typp = Typing.meta_type evd' p in
-  let pred = abstract_list_all env evd' typp typ cllist in
+  let pred = try abstract_list_all env evd' typp typ cllist
+    with PretypeError _ -> abstract_list_search env evd' typp typ cllist in
   w_merge env false flags (evd',[p,pred,(ConvUpToEta 0,TypeProcessed)],[])
 
 let w_unify2 env flags allow_K cv_pb ty1 ty2 evd =

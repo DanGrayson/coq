@@ -134,7 +134,9 @@ let error_clear_dependency env id = function
       errorlabstrm "" (pr_id id ++ str " is used in conclusion.")
   | Evarutil.OccurHypInSimpleClause (Some id') ->
       errorlabstrm ""
-        (pr_id id ++ strbrk " is used in hypothesis " ++ pr_id id' ++ str".")
+        (pr_id id ++ strbrk " is used in hypothesis " ++ pr_id id' ++ str"." ++ fnl() ++ fnl()
+	   ++ str "The context:" ++ fnl() ++ str "  " ++ Printer.pr_context_of env
+	)
   | Evarutil.EvarTypingBreak ev ->
       errorlabstrm ""
         (str "Cannot remove " ++ pr_id id ++
@@ -1912,13 +1914,8 @@ let atomize_param_of_ind (indref,nparams,_) hyp0 gl =
       let argl = snd (decompose_app indtyp) in
       let c = List.nth argl (i-1) in
       match kind_of_term c with
-	| Var id when not (List.exists (occur_var (pf_env gl) id) avoid) ->
-	    atomize_one (i-1) ((mkVar id)::avoid) gl
 	| Var id ->
-	    let x = fresh_id [] id gl in
-	    tclTHEN
-	      (letin_tac None (Name x) (mkVar id) None allHypsAndConcl)
-	      (atomize_one (i-1) ((mkVar x)::avoid)) gl
+	    atomize_one (i-1) ((mkVar id)::avoid) gl
 	| _ ->
 	    let id = id_of_name_using_hdchar (Global.env()) (pf_type_of gl c)
 		       Anonymous in

@@ -224,6 +224,7 @@ val meta_declare   :
   metavariable -> types -> ?name:name -> evar_map -> evar_map
 val meta_assign    : metavariable -> constr * instance_status -> evar_map -> evar_map
 val meta_reassign  : metavariable -> constr * instance_status -> evar_map -> evar_map
+val meta_unassign  : metavariable -> evar_map -> evar_map
 
 (* [meta_merge evd1 evd2] returns [evd2] extended with the metas of [evd1] *)
 val meta_merge : evar_map -> evar_map -> evar_map

@@ -439,6 +439,16 @@ let explain_cannot_find_well_typed_abstraction env p l =
   str "leads to a term" ++ spc () ++ pr_lconstr_env env p ++ spc () ++
   str "which is ill-typed."
 
+let explain_cannot_find_abstraction env evd c l msg =
+  str "Abstraction over the " ++
+    str (plural (List.length l) "term") ++ spc () ++
+    hov 0 (pr_enum (pr_lconstr_env env) l) ++ spc () ++
+    str "not" ++ spc() ++ str msg ++ str "." ++
+    fnl() ++ fnl() ++ str "The context:" ++ fnl() ++
+    str "  " ++ pr_context_of env ++
+    fnl() ++ fnl() ++ str "The term to be abstracted: " ++ fnl() ++ fnl() ++
+    str "  " ++ pr_constr c
+
 let explain_abstraction_over_meta _ m n =
   strbrk "Too complex unification problem: cannot find a solution for both " ++
   pr_name m ++ spc () ++ str "and " ++ pr_name n ++ str "."
@@ -502,6 +512,8 @@ let explain_pretype_error env err =
   | CannotUnifyBindingType (m,n) -> explain_cannot_unify_binding_type env m n
   | CannotFindWellTypedAbstraction (p,l) ->
       explain_cannot_find_well_typed_abstraction env p l
+  | CannotFindAbstraction (evd,c,l,msg) ->
+      explain_cannot_find_abstraction env evd c l msg
   | AbstractionOverMeta (m,n) -> explain_abstraction_over_meta env m n
   | NonLinearUnification (m,c) -> explain_non_linear_unification env m c
 
@@ -850,3 +862,8 @@ let explain_ltac_call_trace (nrep,last,trace,loc) =
            pr_enum pr_call calls ++ strbrk kind_of_last_call)
   else
     mt ()
+
+let _ =
+  Unification.abstract_list_search_warning := 
+  function env -> function evd -> function l -> 
+    msgnl(str "warning: multiple well-typed abstractions found:" ++ (fnl()) ++ prlist_with_sep fnl pr_constr l)

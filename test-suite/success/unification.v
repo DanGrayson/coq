@@ -136,3 +136,4 @@ Goal (forall (A B : Set) (f : A -> B), (fun x => f x) = f) ->
 Proof.
   intros.
   rewrite H.
+Abort.

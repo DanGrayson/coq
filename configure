@@ -6,7 +6,7 @@
 # 
 ##################################
 
-VERSION=8.3pl2
+VERSION=8.3pl2+improved-abstraction
 VOMAGIC=08300
 STATEMAGIC=58300
 DATE=`LANG=C date +"%B %Y"`
@@ -323,8 +323,8 @@ MAKE=`which make`
 if [ "$MAKE" != "" ]; then
   MAKEVERSION=`$MAKE -v | head -1`
   case $MAKEVERSION in
-    "GNU Make 3.8"[12])
-      echo "You have GNU Make >= 3.81. Good!";;
+    "GNU Make 3.8"[1-9] | "GNU Make 3.8"[1-9].* | "GNU Make 3."[0-9]  | "GNU Make 3."[0-9].* | "GNU Make "[4-9].* )
+      echo "You have GNU Make $MAKEVERSION >= 3.81. Good!";;
     *)
       OK="no"
       if [ -x ./make ]; then

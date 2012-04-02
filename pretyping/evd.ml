@@ -675,6 +675,11 @@ let meta_reassign mv (v,pb) evd =
         metas = Metamap.add mv (Clval(na,(mk_freelisted v,pb),ty)) evd.metas }
   | _ -> anomaly "meta_reassign: not yet defined"
 
+let meta_unassign mv evd =
+  match Metamap.find mv evd.metas with
+  | Clval(na,_,ty) -> { evd with metas = Metamap.add mv (Cltyp(na,ty)) evd.metas }
+  | _ -> anomaly "meta_unassign: not yet defined"
+
 (* If the meta is defined then forget its name *)
 let meta_name evd mv =
   try fst (clb_name (Metamap.find mv evd.metas)) with Not_found -> Anonymous
