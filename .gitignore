@@ -36,8 +36,10 @@
 *.v.pdf
 *.v.ps
 *.v.html
+*.ml4-preprocessed
 revision
 TAGS
+TAGS.coq
 bin/
 config/Makefile
 config/coq_config.ml
