@@ -522,7 +522,10 @@ let pf_lookup_hypothesis_as_renamed env ccl = function
 
 let pf_lookup_hypothesis_as_renamed_gen red h gl =
   let env = pf_env gl in
+  let infinite_loop_detector = ref 0 in 
   let rec aux ccl =
+    incr infinite_loop_detector;
+    if !infinite_loop_detector > 10 then raise Redelimination;
     match pf_lookup_hypothesis_as_renamed env ccl h with
       | None when red ->
           aux
