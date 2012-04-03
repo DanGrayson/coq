@@ -17,7 +17,7 @@ open Environ
 open Esubst
 
 let stats = ref false
-let share = ref false
+let share = ref true
 
 (* Profiling *)
 let beta = ref 0
