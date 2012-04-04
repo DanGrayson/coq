@@ -312,6 +312,8 @@ let parse_args is_ide =
 
     | "-xml" :: rem -> Flags.xml_export := true; parse rem
 
+    | "-no-share" :: rem -> Closure.share := false; parse rem
+
     | "-output-context" :: rem -> output_context := true; parse rem
 
     (* Scanned in Flags. *)

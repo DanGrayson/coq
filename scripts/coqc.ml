@@ -154,7 +154,7 @@ let parse_args () =
 
     | ("-notactics"|"-debug"|"-nolib"
       |"-debugVM"|"-alltransp"|"-VMno"
-      |"-batch"|"-nois"|"-noglob"|"-no-glob"
+      |"-batch"|"-nois"|"-noglob"|"-no-glob"|"-no-share"
       |"-q"|"-full"|"-profile"|"-just-parsing"|"-echo" |"-unsafe"|"-quiet"
       |"-silent"|"-m"|"-xml"|"-v7"|"-v8"|"-beautify"|"-strict-implicit"
       |"-dont-load-proofs"|"-impredicative-set"|"-vm"

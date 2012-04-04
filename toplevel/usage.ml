@@ -69,6 +69,7 @@ let print_usage_channel co command =
                          stdout (if unset)
   -quality               improve the legibility of the proof terms produced by
                          some tactics
+  -no-share              turn off sharing
   -h, --help             print this list of options
 "
 
