@@ -282,13 +282,13 @@ let create mk_cl flgs env evars =
      create a redex when substituted (i.e. constructor, fix, lambda)
    Whnf means we reached the head normal form and that it cannot
      create a redex when substituted
-   Red is used for terms that might be reduced
+   ClosureRed is used for terms that might be reduced
 *)
-type red_state = Norm | Cstr | Whnf | Red
+type red_state = Norm | Cstr | Whnf | ClosureRed
 
 let neutr = function
   | (Whnf|Norm) -> Whnf
-  | (Red|Cstr) -> Red
+  | (ClosureRed|Cstr) -> ClosureRed
 
 type fconstr = {
   mutable norm: red_state;
@@ -319,7 +319,7 @@ let is_val v = v.norm = Norm
 
 let mk_atom c = {norm=Norm;term=FAtom c}
 
-(* Could issue a warning if no is still Red, pointing out that we loose
+(* Could issue a warning if no is still ClosureRed, pointing out that we loose
    sharing. *)
 let update v1 (no,t) =
   if !share then
@@ -400,7 +400,7 @@ let rec stack_nth s p = match s with
       else args.(p)
   | _ -> raise Not_found
 
-(* Lifting. Preserves sharing (useful only for cell with norm=Red).
+(* Lifting. Preserves sharing (useful only for cell with norm=ClosureRed).
    lft_fconstr always create a new cell, while lift_fconstr avoids it
    when the lift is 0. *)
 let rec lft_fconstr n ft =
@@ -423,7 +423,7 @@ let clos_rel e i =
     | Inl(n,mt) -> lift_fconstr n mt
     | Inr(k,None) -> {norm=Norm; term= FRel k}
     | Inr(k,Some p) ->
-        lift_fconstr (k-p) {norm=Red;term=FFlex(RelKey p)}
+        lift_fconstr (k-p) {norm=ClosureRed;term=FFlex(RelKey p)}
 
 (* since the head may be reducible, we might introduce lifts of 0 *)
 let compact_stack head stk =
@@ -440,7 +440,7 @@ let compact_stack head stk =
 
 (* Put an update mark in the stack, only if needed *)
 let zupdate m s =
-  if !share & m.norm = Red
+  if !share & m.norm = ClosureRed
   then
     let s' = compact_stack m s in
     let _ = m.term <- FLOCKED in
@@ -531,13 +531,13 @@ let destFLambda clos_fun t =
 let mk_clos e t =
   match kind_of_term t with
     | Rel i -> clos_rel e i
-    | Var x -> { norm = Red; term = FFlex (VarKey x) }
-    | Const c -> { norm = Red; term = FFlex (ConstKey c) }
+    | Var x -> { norm = ClosureRed; term = FFlex (VarKey x) }
+    | Const c -> { norm = ClosureRed; term = FFlex (ConstKey c) }
     | Meta _ | Sort _ ->  { norm = Norm; term = FAtom t }
     | Ind kn -> { norm = Norm; term = FInd kn }
     | Construct kn -> { norm = Cstr; term = FConstruct kn }
     | (CoFix _|Lambda _|Fix _|Prod _|Evar _|App _|Case _|Cast _|LetIn _) ->
-        {norm = Red; term = FCLOS(t,e)}
+        {norm = ClosureRed; term = FCLOS(t,e)}
 
 let mk_clos_vect env v = Array.map (mk_clos env) v
 
@@ -550,13 +550,13 @@ let mk_clos_deep clos_fun env t =
     | (Rel _|Ind _|Const _|Construct _|Var _|Meta _ | Sort _) ->
         mk_clos env t
     | Cast (a,k,b) ->
-        { norm = Red;
+        { norm = ClosureRed;
           term = FCast (clos_fun env a, k, clos_fun env b)}
     | App (f,v) ->
-        { norm = Red;
+        { norm = ClosureRed;
 	  term = FApp (clos_fun env f, Array.map (clos_fun env) v) }
     | Case (ci,p,c,v) ->
-        { norm = Red;
+        { norm = ClosureRed;
 	  term = FCases (ci, clos_fun env p, clos_fun env c,
 			 Array.map (clos_fun env) v) }
     | Fix fx ->
@@ -569,10 +569,10 @@ let mk_clos_deep clos_fun env t =
         { norm = Whnf;
 	  term = FProd (n, clos_fun env t, clos_fun (subs_lift env) c) }
     | LetIn (n,b,t,c) ->
-        { norm = Red;
+        { norm = ClosureRed;
 	  term = FLetIn (n, clos_fun env b, clos_fun env t, c, env) }
     | Evar ev ->
-	{ norm = Red; term = FEvar(ev,env) }
+	{ norm = ClosureRed; term = FEvar(ev,env) }
 
 (* A better mk_clos? *)
 let mk_clos2 = mk_clos_deep mk_clos
@@ -680,7 +680,7 @@ let fapp_stack (m,stk) = zip m stk
 
 (* optimised for the case where there are no shifts... *)
 let strip_update_shift head stk =
-  assert (head.norm <> Red);
+  assert (head.norm <> ClosureRed);
   let rec strip_rec h depth = function
     | Zshift(k)::s -> strip_rec (lift_fconstr k h) (depth+k) s
     | Zupdate(m)::s ->
@@ -690,7 +690,7 @@ let strip_update_shift head stk =
 
 (* optimised for the case where there are no shifts... *)
 let strip_update_shift_app head stk =
-  assert (head.norm <> Red);
+  assert (head.norm <> ClosureRed);
   let rec strip_rec rstk h depth = function
     | Zshift(k) as e :: s ->
         strip_rec (e::rstk) (lift_fconstr k h) (depth+k) s
@@ -704,7 +704,7 @@ let strip_update_shift_app head stk =
 
 
 let get_nth_arg head n stk =
-  assert (head.norm <> Red);
+  assert (head.norm <> ClosureRed);
   let rec strip_rec rstk h depth n = function
     | Zshift(k) as e :: s ->
         strip_rec (e::rstk) (lift_fconstr k h) (depth+k) n s

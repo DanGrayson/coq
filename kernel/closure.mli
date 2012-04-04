@@ -94,12 +94,13 @@ val evar_value : 'a infos -> existential -> constr option
 
 (* [fconstr] is the type of frozen constr *)
 
-type fconstr
+type red_state = Norm | Cstr | Whnf | ClosureRed
 
-(* [fconstr] can be accessed by using the function [fterm_of] and by
-   matching on type [fterm] *)
+type fconstr = {
+  mutable norm: red_state;
+  mutable term: fterm }
 
-type fterm =
+and fterm =
   | FRel of int
   | FAtom of constr (* Metas and Sorts *)
   | FCast of fconstr * cast_kind * fconstr
@@ -117,6 +118,9 @@ type fterm =
   | FLIFT of int * fconstr
   | FCLOS of constr * fconstr subs
   | FLOCKED
+
+(* [fconstr] can be accessed by using the function [fterm_of] and by
+   matching on type [fterm] *)
 
 (************************************************************************)
 (*s A [stack] is a context of arguments, arguments are pushed by
