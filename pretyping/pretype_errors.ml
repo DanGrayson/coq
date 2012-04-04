@@ -46,7 +46,7 @@ exception PretypeError of env * pretype_error
 
 let precatchable_exception = function
   | Util.UserError _ | TypeError _ | PretypeError _
-  | Stdpp.Exc_located(_,(Util.UserError _ | TypeError _ |
+  | Ploc.Exc(_,(Util.UserError _ | TypeError _ |
     Nametab.GlobalizationError _ | PretypeError _)) -> true
   | _ -> false
 
