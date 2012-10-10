@@ -64,11 +64,12 @@ let rec classify_vernac e =
     (* Nested vernac exprs *)
     | VernacProgram e -> classify_vernac e
     | VernacLocal (_,e) -> classify_vernac e
+    | VernacPolymorphic (b, e) -> classify_vernac e
     | VernacTimeout (_,e) -> classify_vernac e
     | VernacTime e -> classify_vernac e
     | VernacFail e -> (* Fail Qed or Fail Lemma must not join/fork the DAG *)
         (match classify_vernac e with
-        | ( VtQuery _ | VtProofStep _ | VtSideff _
+        | ( VtQuery _ | VtProofStep | VtSideff _
           | VtStm _ | VtProofMode _ ), _ as x -> x
         | VtQed _, _ -> VtProofStep, VtNow
         | (VtStartProof _ | VtUnknown), _ -> VtUnknown, VtNow)
@@ -81,11 +82,11 @@ let rec classify_vernac e =
     (* ProofStep *)
     | VernacProof _ 
     | VernacBullet _ 
-    | VernacFocus _ | VernacUnfocus _
-    | VernacSubproof _ | VernacEndSubproof _ 
+    | VernacFocus _ | VernacUnfocus
+    | VernacSubproof _ | VernacEndSubproof
     | VernacSolve _ 
-    | VernacCheckGuard _
-    | VernacUnfocused _
+    | VernacCheckGuard
+    | VernacUnfocused
     | VernacSolveExistential _ -> VtProofStep, VtLater
     (* StartProof *)
     | VernacDefinition (_,(_,i),ProveBody _) ->
@@ -164,7 +165,7 @@ let rec classify_vernac e =
     (* Stm will install a new classifier to handle these *)
     | VernacBack _ | VernacAbortAll
     | VernacUndoTo _ | VernacUndo _
-    | VernacResetName _ | VernacResetInitial _
+    | VernacResetName _ | VernacResetInitial
     | VernacBacktrack _ | VernacBackTo _ | VernacRestart -> !undo_classifier e
     (* What are these? *)
     | VernacNop

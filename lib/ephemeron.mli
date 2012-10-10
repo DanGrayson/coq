@@ -50,3 +50,6 @@ val iter_opt : 'a key -> ('a -> unit) -> unit
 val default : 'a key -> 'a -> 'a
 
 val clear : unit -> unit
+
+(** Might raise InvalidKey is the key is already marshalled *)
+val map : ('a -> 'b) -> 'a key -> 'b key

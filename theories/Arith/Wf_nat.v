@@ -186,7 +186,8 @@ Section LT_WF_REL.
   Variable F : A -> nat -> Prop.
   Definition inv_lt_rel x y := exists2 n, F x n & (forall m, F y m -> n < m).
 
-  Hypothesis F_compat : forall x y:A, R x y -> inv_lt_rel x y.
+  Hypothesis F_compat : forall x y:A, R x y -> inv_lt_rel x y.  
+  
   Remark acc_lt_rel : forall x:A, (exists n, F x n) -> Acc R x.
   Proof.
     intros x [n fxn]; generalize dependent x.

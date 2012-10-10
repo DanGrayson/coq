@@ -87,3 +87,5 @@ let iter_opt k f =
   | Some v -> f v
 
 let clear () = run_collection ()
+
+let map f k = create (f (get k))

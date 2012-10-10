@@ -23,17 +23,17 @@ let absurd c gls =
   let j = Retyping.get_judgment_of env sigma c in
   let sigma, j = Coercion.inh_coerce_to_sort Loc.ghost env sigma j in
   let c = j.Environ.utj_val in
-  (tclTHENS
-     (tclTHEN (elim_type (build_coq_False ())) (cut c))
-     ([(tclTHENS
-          (cut (mkApp(build_coq_not (),[|c|])))
-	  ([(tclTHEN intros
+    (tclTHENS
+       (tclTHEN (elim_type (build_coq_False ())) (cut c))
+       ([(tclTHENS
+            (cut (mkApp(build_coq_not (),[|c|])))
+	    ([(tclTHEN intros
 	       ((fun gl ->
-		   let ida = pf_nth_hyp_id gl 1
-                   and idna = pf_nth_hyp_id gl 2 in
+		 let ida = pf_nth_hyp_id gl 1
+                 and idna = pf_nth_hyp_id gl 2 in
                    exact_no_check (mkApp(mkVar idna,[|mkVar ida|])) gl)));
-            tclIDTAC]));
-       tclIDTAC])) { gls with Evd.sigma; }
+              tclIDTAC]));
+	 tclIDTAC])) { gls with Evd.sigma; }
 
 (* Contradiction *)
 
