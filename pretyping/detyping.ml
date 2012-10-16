@@ -1,6 +1,6 @@
 (************************************************************************)
 (*  v      *   The Coq Proof Assistant  /  The Coq Development Team     *)
-(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2010     *)
+(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2011     *)
 (*   \VV/  **************************************************************)
 (*    //   *      This file is distributed under the terms of the       *)
 (*         *       GNU Lesser General Public License Version 2.1        *)
@@ -467,7 +467,7 @@ and share_names isgoal n l avoid env c t =
         let b = detype isgoal avoid env b in
 	let id = next_name_away na avoid in
         let avoid = id::avoid and env = add_name (Name id) env in
-        share_names isgoal n ((Name id,Explicit,Some b,t')::l) avoid env c t
+        share_names isgoal n ((Name id,Explicit,Some b,t')::l) avoid env c (lift 1 t)
     (* Only if built with the f/n notation or w/o let-expansion in types *)
     | _, LetIn (_,b,_,t) when n > 0 ->
 	share_names isgoal n l avoid env c (subst1 b t)
@@ -533,7 +533,7 @@ and detype_eqn isgoal avoid env constr construct_nargs branch =
   buildrec [] [] avoid env construct_nargs branch
 
 and detype_binder isgoal bk avoid env na ty c =
-  let flag = if isgoal then RenamingForGoal else (RenamingElsewhereFor c) in
+  let flag = if isgoal then RenamingForGoal else RenamingElsewhereFor (env,c) in
   let na',avoid' =
     if bk = BLetIn then compute_displayed_let_name_in flag avoid na c
     else compute_displayed_name_in flag avoid na c in
@@ -553,9 +553,11 @@ let rec detype_rel_context where avoid env sign =
 	| None -> na,avoid
 	| Some c ->
 	    if b<>None then
-	      compute_displayed_let_name_in (RenamingElsewhereFor c) avoid na c
+	      compute_displayed_let_name_in
+                (RenamingElsewhereFor (env,c)) avoid na c
 	    else
-	      compute_displayed_name_in (RenamingElsewhereFor c) avoid na c in
+	      compute_displayed_name_in
+                (RenamingElsewhereFor (env,c)) avoid na c in
       let b = Option.map (detype false avoid env) b in
       let t = detype false avoid env t in
       (na',Explicit,b,t) :: aux avoid' (add_name na' env) rest

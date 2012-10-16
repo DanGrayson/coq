@@ -105,3 +105,4 @@ plugins/*/*_mod.ml
 myocamlbuild_config.ml
 .DS_Store
 .pc
+*.ml4-preprocessed

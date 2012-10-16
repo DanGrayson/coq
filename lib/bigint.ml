@@ -1,6 +1,6 @@
 (************************************************************************)
 (*  v      *   The Coq Proof Assistant  /  The Coq Development Team     *)
-(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2010     *)
+(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2011     *)
 (*   \VV/  **************************************************************)
 (*    //   *      This file is distributed under the terms of the       *)
 (*         *       GNU Lesser General Public License Version 2.1        *)
@@ -177,14 +177,23 @@ let rec can_divide k m d i =
   (m.(k+i) > d.(i)) or
   (m.(k+i) = d.(i) && can_divide k m d (i+1))
 
-(* computes m - d * q * base^(|m|-k) in-place on positive numbers *)
+(* For two big nums m and d and a small number q,
+   computes m - d * q * base^(|m|-|d|-k) in-place (in m).
+   Both m d and q are positive. *)
+
 let sub_mult m d q k =
   if q <> 0 then
   for i = Array.length d - 1 downto 0 do
     let v = d.(i) * q in
     m.(k+i) <- m.(k+i) - v mod base;
     if m.(k+i) < 0 then (m.(k+i) <- m.(k+i) + base; m.(k+i-1) <- m.(k+i-1) -1);
-    if v >= base then m.(k+i-1) <- m.(k+i-1) - v / base;
+    if v >= base then begin
+      m.(k+i-1) <- m.(k+i-1) - v / base;
+      let j = ref (i-1) in
+      while m.(k + !j) < 0 do (* result is positive, hence !j remains >= 0 *)
+        m.(k + !j) <- m.(k + !j) + base; decr j; m.(k + !j) <- m.(k + !j) -1
+      done
+    end
   done
 
 let euclid m d =

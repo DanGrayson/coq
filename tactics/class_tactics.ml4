@@ -1,6 +1,6 @@
 (************************************************************************)
 (*  v      *   The Coq Proof Assistant  /  The Coq Development Team     *)
-(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2010     *)
+(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2011     *)
 (*   \VV/  **************************************************************)
 (*    //   *      This file is distributed under the terms of the       *)
 (*         *       GNU Lesser General Public License Version 2.1        *)
@@ -219,7 +219,7 @@ let e_possible_resolve db_list local_db gl =
 
 let rec catchable = function
   | Refiner.FailError _ -> true
-  | Stdpp.Exc_located (_, e) -> catchable e
+  | Compat.Exc_located (_, e) -> catchable e
   | e -> Logic.catchable_exception e
 
 let is_dep gl gls =

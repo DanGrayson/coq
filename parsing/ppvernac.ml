@@ -1,6 +1,6 @@
 (************************************************************************)
 (*  v      *   The Coq Proof Assistant  /  The Coq Development Team     *)
-(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2010     *)
+(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2011     *)
 (*   \VV/  **************************************************************)
 (*    //   *      This file is distributed under the terms of the       *)
 (*         *       GNU Lesser General Public License Version 2.1        *)
@@ -439,8 +439,8 @@ let pr_paren_reln_or_extern = function
 
 let pr_statement head (id,(bl,c,guard)) =
   assert (id<>None);
-  hov 0
-    (head ++ pr_lident (Option.get id) ++ spc() ++
+  hov 1
+    (head ++ spc() ++ pr_lident (Option.get id) ++ spc() ++
     (match bl with [] -> mt() | _ -> pr_binders bl ++ spc()) ++
     pr_opt (pr_guard_annot bl) guard ++
     str":" ++ pr_spc_lconstr c)
@@ -781,7 +781,7 @@ let rec pr_vernac = function
       (if i = 1 then mt() else int i ++ str ": ") ++
       pr_raw_tactic tac
       ++ (try if deftac & Pfedit.get_end_tac() <> None then str ".." else mt ()
-      with UserError _|Stdpp.Exc_located _ -> mt())
+      with UserError _|Compat.Exc_located _ -> mt())
 
   | VernacSolveExistential (i,c) ->
       str"Existential " ++ int i ++ pr_lconstrarg c

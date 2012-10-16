@@ -1,6 +1,6 @@
 (************************************************************************)
 (*  v      *   The Coq Proof Assistant  /  The Coq Development Team     *)
-(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2010     *)
+(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2011     *)
 (*   \VV/  **************************************************************)
 (*    //   *      This file is distributed under the terms of the       *)
 (*         *       GNU Lesser General Public License Version 2.1        *)
@@ -1057,7 +1057,7 @@ let cl_rewrite_clause_aux ?(abs=None) strat goal_meta clause gl =
 	      else tclIDTAC
 	    in tclTHENLIST [evartac; rewtac] gl
 	  with
-	  | Stdpp.Exc_located (_, TypeClassError (env, (UnsatisfiableConstraints _ as e)))
+	  | Compat.Exc_located (_, TypeClassError (env, (UnsatisfiableConstraints _ as e)))
 	  | TypeClassError (env, (UnsatisfiableConstraints _ as e)) ->
 	      Refiner.tclFAIL_lazy 0
 		(lazy (str"setoid rewrite failed: unable to satisfy the rewriting constraints."

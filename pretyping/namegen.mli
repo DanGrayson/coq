@@ -1,6 +1,6 @@
 (************************************************************************)
 (*  v      *   The Coq Proof Assistant  /  The Coq Development Team     *)
-(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2010     *)
+(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2011     *)
 (*   \VV/  **************************************************************)
 (*    //   *      This file is distributed under the terms of the       *)
 (*         *       GNU Lesser General Public License Version 2.1        *)
@@ -64,7 +64,7 @@ val next_name_away_with_default : string -> name -> identifier list ->
 type renaming_flags =
   | RenamingForCasesPattern (* avoid only global constructors *)
   | RenamingForGoal (* avoid all globals (as in intro) *)
-  | RenamingElsewhereFor of constr
+  | RenamingElsewhereFor of (name list * constr)
 
 val make_all_name_different : env -> env
 
@@ -74,4 +74,5 @@ val compute_and_force_displayed_name_in :
   renaming_flags -> identifier list -> name -> constr -> name * identifier list
 val compute_displayed_let_name_in :
   renaming_flags -> identifier list -> name -> constr -> name * identifier list
-val rename_bound_vars_as_displayed : identifier list -> types -> types
+val rename_bound_vars_as_displayed :
+  identifier list -> name list -> types -> types

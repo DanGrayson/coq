@@ -1,6 +1,6 @@
 (************************************************************************)
 (*  v      *   The Coq Proof Assistant  /  The Coq Development Team     *)
-(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2010     *)
+(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2011     *)
 (*   \VV/  **************************************************************)
 (*    //   *      This file is distributed under the terms of the       *)
 (*         *       GNU Lesser General Public License Version 2.1        *)
@@ -274,7 +274,7 @@ let rec explain_exn = function
 (*      let ctx = Check.get_env() in
       hov 0
         (str "Error:" ++ spc () ++ Himsg.explain_inductive_error ctx e)*)
-  | Stdpp.Exc_located (loc,exc) ->
+  | Compat.Exc_located (loc,exc) ->
       hov 0 ((if loc = dummy_loc then (mt ())
                else (str"At location " ++ print_loc loc ++ str":" ++ fnl ()))
                ++ explain_exn exc)

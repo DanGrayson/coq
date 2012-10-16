@@ -1,6 +1,6 @@
 (************************************************************************)
 (*  v      *   The Coq Proof Assistant  /  The Coq Development Team     *)
-(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2010     *)
+(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2011     *)
 (*   \VV/  **************************************************************)
 (*    //   *      This file is distributed under the terms of the       *)
 (*         *       GNU Lesser General Public License Version 2.1        *)
@@ -46,7 +46,7 @@ exception PretypeError of env * pretype_error
 
 let precatchable_exception = function
   | Util.UserError _ | TypeError _ | PretypeError _
-  | Stdpp.Exc_located(_,(Util.UserError _ | TypeError _ |
+  | Compat.Exc_located(_,(Util.UserError _ | TypeError _ |
     Nametab.GlobalizationError _ | PretypeError _)) -> true
   | _ -> false
 

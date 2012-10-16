@@ -1,6 +1,6 @@
 (************************************************************************)
 (*  v      *   The Coq Proof Assistant  /  The Coq Development Team     *)
-(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2010     *)
+(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2011     *)
 (*   \VV/  **************************************************************)
 (*    //   *      This file is distributed under the terms of the       *)
 (*         *       GNU Lesser General Public License Version 2.1        *)
@@ -241,7 +241,7 @@ let compare_recursive_parts found f (iterator,subc) =
   | RLambda (_,Name x,_,t_x,c), RLambda (_,Name y,_,t_y,term)
   | RProd (_,Name x,_,t_x,c), RProd (_,Name y,_,t_y,term) ->
       (* We found a binding position where it differs *)
-      check_is_hole y t_x;
+      check_is_hole x t_x;
       check_is_hole y t_y;
       !diff = None && (diff := Some (x,y,None); aux c term)
   | _ ->
@@ -722,6 +722,7 @@ let rec match_ alp (tmetas,blmetas as metas) sigma a1 a2 = match (a1,a2) with
       match_ alp metas (match_ alp metas sigma c1 c2) t1 t2
   | RCast(_,c1, CastCoerce), ACast(c2, CastCoerce) ->
       match_ alp metas sigma c1 c2
+  | RSort (_,RType _), ASort (RType None) -> sigma
   | RSort (_,s1), ASort s2 when s1 = s2 -> sigma
   | RPatVar _, AHole _ -> (*Don't hide Metas, they bind in ltac*) raise No_match
   | a, AHole _ -> sigma
@@ -900,6 +901,12 @@ let names_of_local_assums bl =
 
 let names_of_local_binders bl =
   List.flatten (List.map (function LocalRawAssum(l,_,_)->l|LocalRawDef(l,_)->[l]) bl)
+
+(**********************************************************************)
+(* Miscellaneous *)
+
+let error_invalid_pattern_notation loc =
+  user_err_loc (loc,"",str "Invalid notation for pattern.")
 
 (**********************************************************************)
 (* Functions on constr_expr *)

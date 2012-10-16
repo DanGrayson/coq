@@ -1,6 +1,6 @@
 (************************************************************************)
 (*  v      *   The Coq Proof Assistant  /  The Coq Development Team     *)
-(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2010     *)
+(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2011     *)
 (*   \VV/  **************************************************************)
 (*    //   *      This file is distributed under the terms of the       *)
 (*         *       GNU Lesser General Public License Version 2.1        *)
@@ -51,7 +51,8 @@ open Genarg
 
 
 let compute_renamed_type gls c =
-  rename_bound_vars_as_displayed [] (pf_type_of gls c)
+  rename_bound_vars_as_displayed (*no avoid*) [] (*no rels*) []
+    (pf_type_of gls c)
 
 let qed () = Lemmas.save_named true
 let defined () = Lemmas.save_named false

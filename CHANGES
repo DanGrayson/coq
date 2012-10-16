@@ -1,3 +1,73 @@
+Changes from V8.3pl3 to V8.3pl4
+===============================
+
+Bug fixes:
+
+- #2724 (using notations with binders in cases patterns was provoking an anomaly)
+- #2723 (alpha-conversion bug #2723 introduced in r12485-12486)
+- #2732 (anomaly when using the tolerance for writing "f atomic_tac"
+    as a short-hand for "f ltac:(atomic_tac)")
+- #2729 (vm_compute: function used to decompose constructors did not handle let-ins)
+- #2728 (compatibility with camlp5 6.05)
+- #2682 (Fail discard the effects of a successful command)
+- #2703 (Undetected universe inconsistency)
+- #2667 (Coq crashes when "Arguments Scope" has too many parameters)
+- Compilation of coqide under MacOS with gtk >= 2.24.11
+- Coqdoc: Fixing missing newline when using "Proof term."
+
+
+Changes from V8.3pl2 to V8.3pl3
+===============================
+
+The following (non exhaustive) list of bugs have been fixed:
+
+General
+
+- #2411 (Axiom / Hypothesis / Variable allowed again during proofs)
+- #2603 (verify that all names of an inductive block aren't already used)
+- #1804 (pattern-matching compilation bug with highly nested sigma-types)
+- #2615 (anomaly in inferring pattern-matching return type)
+- #2504 (bug in computing universe of polymorphic inductive types)
+- #2407 (stack overflow in Function)
+- #2181 (unnamed but dependent fields in Classes)
+- bug with modules in virtual machine
+
+Modules
+
+- #2608 (better handling of inlining and aliases, avoiding a Not_found)
+- #2168 (Print Assumption now support opaque modules)
+- #2609 (avoid adding twice a module in the environment in coqchk)
+
+Tactics
+
+- #2467, #2464 (fixes for fsetdec)
+- Document the "appcontext" variant of "context" that better handles
+  partial applications.
+- #2640 (ltac anomaly in expecting a tactic and finding a definition)
+
+Coqide
+
+- #2363 (fix the command separator for external commands)
+- #2499 (fix remove_current_view_page)
+- #2357 (allow the use of Abort)
+
+Extraction
+
+- #2540 (global references should be indexed on their user parts)
+- #2556 (support of records with anonymous fields)
+- #2565 (typo in the documentation)
+- #2570 (avoid internal eta-reduction)
+- #2552 (For Haskell, type signature for __ and unsafeCoerce)
+- For Haskell, avoid some sources of useless unsafeCoerce
+- Forbid Prop-universe-polymorphism of inductive when extracting
+  to ocaml, otherwise things may fail badly (report by S. Glondu).
+
+Coqdoc
+
+- #2606 (bad processing of coq escaped in comments)
+- #2423 (handling of -R in coqdoc)
+- fixing garbage when using some greek letters as identifier names
+
 Changes from V8.3pl1 to V8.3pl2
 ===============================
 
@@ -122,7 +192,7 @@ Automation tactics
 
 - Tactic "intuition" now preserves inner "iff" and "not" (exceptional
   source of incompatibilities solvable by redefining "intuition" as
-  "unfold iff, not in *; intuition", or by using "Set Intuition Unfolding".)
+  "unfold iff, not in *; intuition", or by using "Set Intuition Iff Unfolding".)
 - Tactic "tauto" now proves classical tautologies as soon as classical logic
   (i.e. library Classical_Prop or Classical) is loaded.
 - Tactic "gappa" has been removed from the Dp plugin.

@@ -1,6 +1,6 @@
 (************************************************************************)
 (*  v      *   The Coq Proof Assistant  /  The Coq Development Team     *)
-(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2010     *)
+(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2011     *)
 (*   \VV/  **************************************************************)
 (*    //   *      This file is distributed under the terms of the       *)
 (*         *       GNU Lesser General Public License Version 2.1        *)
@@ -282,3 +282,7 @@ val ntn_loc :
   Util.loc -> constr_notation_substitution -> string -> (int * int) list
 val patntn_loc :
   Util.loc -> cases_pattern_notation_substitution -> string -> (int * int) list
+
+(** For cases pattern parsing errors *)
+
+val error_invalid_pattern_notation : Util.loc -> 'a
