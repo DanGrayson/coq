@@ -81,6 +81,7 @@ doc/refman/cover.html
 doc/refman/styles.hva
 doc/refman/Reference-Manual.html
 doc/common/version.tex
+doc/refman/Reference-Manual.out
 doc/refman/Reference-Manual.sh
 doc/refman/coqide-queries.eps
 doc/refman/coqide.eps
