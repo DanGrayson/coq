@@ -179,6 +179,8 @@ type mutual_inductive_body = {
 
     mind_native_name : native_name ref; (** status of the code (linked or not, and where) *)
 
+    mind_private : bool option; (** allow pattern-matching Some true ok, Some false blocked *)
+
   }
 
 (** {6 Module declarations } *)

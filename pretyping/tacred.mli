@@ -17,6 +17,7 @@ open Termops
 open Pattern
 open Globnames
 open Locus
+open Univ
 
 type reduction_tactic_error =
     InvalidAbstraction of env * constr * (env * Type_errors.type_error)
@@ -117,3 +118,7 @@ val contextually : bool -> occurrences * constr_pattern ->
 
 val e_contextually : bool -> occurrences * constr_pattern ->
   (patvar_map -> e_reduction_function) -> e_reduction_function
+
+(** Returns the same inductive if it is allowed for pattern-matching
+    raises an error otherwise. **)
+val check_privacy : env -> inductive puniverses -> inductive puniverses

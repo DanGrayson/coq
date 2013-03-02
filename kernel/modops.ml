@@ -309,7 +309,12 @@ let rec add_structure mp sign resolver env =
       Environ.add_constant c cb env
     |SFBmind mib ->
       let mind = mind_of_delta_kn resolver (KerName.make2 mp l) in
-      Environ.add_mind mind mib env
+      let mib = 
+	if mib.mind_private != None then 
+	  { mib with mind_private = Some true }
+	else mib
+      in
+	Environ.add_mind mind mib env
     |SFBmodule mb -> add_module mb env (* adds components as well *)
     |SFBmodtype mtb -> Environ.add_modtype mtb env
   in
