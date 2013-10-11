@@ -67,7 +67,7 @@ let interp_positive dloc n =
 let rec bignat_of_pos = function
   | GApp (_, GRef (_,b,_),[a]) when Globnames.eq_gr b glob_xO -> mult_2(bignat_of_pos a)
   | GApp (_, GRef (_,b,_),[a]) when Globnames.eq_gr b glob_xI -> add_1(mult_2(bignat_of_pos a))
-  | GRef (_, a,_) when Globnames.eq_gr a glob_xH -> Bigint.one
+  | GRef (_, a, _) when Globnames.eq_gr a glob_xH -> Bigint.one
   | _ -> raise Non_closed_number
 
 let uninterp_positive p =
@@ -121,7 +121,7 @@ let n_of_int dloc n =
 
 let bignat_of_n = function
   | GApp (_, GRef (_,b,_),[a]) when Globnames.eq_gr b glob_Npos -> bignat_of_pos a
-  | GRef (_, a,_) when Globnames.eq_gr a glob_N0 -> Bigint.zero
+  | GRef (_, a, _) when Globnames.eq_gr a glob_N0 -> Bigint.zero
   | _ -> raise Non_closed_number
 
 let uninterp_n p =
@@ -168,7 +168,7 @@ let z_of_int dloc n =
 let bigint_of_z = function
   | GApp (_, GRef (_,b,_),[a]) when Globnames.eq_gr b glob_POS -> bignat_of_pos a
   | GApp (_, GRef (_,b,_),[a]) when Globnames.eq_gr b glob_NEG -> Bigint.neg (bignat_of_pos a)
-  | GRef (_, a,_) when Globnames.eq_gr a glob_ZERO -> Bigint.zero
+  | GRef (_, a, _) when Globnames.eq_gr a glob_ZERO -> Bigint.zero
   | _ -> raise Non_closed_number
 
 let uninterp_z p =
