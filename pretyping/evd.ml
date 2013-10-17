@@ -1019,14 +1019,6 @@ let fresh_constructor_instance env evd c =
   with_context_set univ_flexible evd (Universes.fresh_constructor_instance env c)
 
 let fresh_global ?(rigid=univ_flexible) env evd gr =
-  (* match gr with *)
-  (* | ConstructRef c -> let evd, c = fresh_constructor_instance env evd c in  *)
-  (* 			evd, mkConstructU c *)
-  (* | IndRef c -> let evd, c = fresh_inductive_instance env evd c in *)
-  (* 		  evd, mkIndU c *)
-  (* | ConstRef c -> let evd, c = fresh_constant_instance env evd c in *)
-  (* 		    evd, mkConstU c *)
-  (* | VarRef i -> evd, mkVar i *)
   with_context_set rigid evd (Universes.fresh_global_instance env gr)
 
 let whd_sort_variable evd t = t
@@ -1435,6 +1427,10 @@ type 'a sigma = {
 
 let sig_it x = x.it
 let sig_sig x = x.sigma
+
+let on_sig s f = 
+  let sigma', v = f s.sigma in
+    { s with sigma = sigma' }, v
 
 (**********************************************************)
 (* Failure explanation *)

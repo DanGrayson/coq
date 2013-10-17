@@ -58,7 +58,7 @@ let declare_class g =
 (** TODO: add subinstances *)
 let existing_instance glob g pri =
   let c = global g in
-  let instance = Typing.type_of (Global.env ()) Evd.empty (Universes.constr_of_global c) in
+  let instance = Global.type_of_global_unsafe c in
   let _, r = decompose_prod_assum instance in
     match class_of_constr r with
       | Some (_, ((tc,u), _)) -> add_instance (new_instance tc pri glob 
@@ -280,7 +280,6 @@ let new_instance ?(abstract=false) ?(global=false) poly ctx (instid, bk, cl) pro
 	Evarutil.check_evars env Evd.empty evm termtype
       in
       let term = Option.map nf term in
-      let evm = Evarutil.nf_evar_map_undefined !evars in
 	if not (Evd.has_undefined evm) && not (Option.is_empty term) then
 	  let ctx = Evd.universe_context evm in
 	    declare_instance_constant k pri global imps ?hook id 
@@ -363,7 +362,7 @@ let context l =
       let impl = List.exists test impls in
       let decl = (Discharge, (Flags.use_polymorphic_flag ()), Definitional) in
       let nstatus =
-        snd (Command.declare_assumption false decl (t, uctx) [] impl
+        pi3 (Command.declare_assumption false decl (t, uctx) [] impl
           Vernacexpr.NoInline (Loc.ghost, id))
       in
       status && nstatus

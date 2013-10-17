@@ -37,8 +37,8 @@ let interp_ascii dloc p =
   let rec aux n p =
      if Int.equal n 0 then [] else
      let mp = p mod 2 in
-     GRef (dloc,(if Int.equal mp 0 then glob_false else glob_true),None)
-     :: (aux (n-1) (p/2)) in
+     let glob = if Int.equal mp 0 then glob_false else glob_true in
+       GRef (dloc,glob,None) :: (aux (n-1) (p/2)) in
   GApp (dloc,GRef(dloc,force glob_Ascii,None), aux 8 p)
 
 let interp_ascii_string dloc s =

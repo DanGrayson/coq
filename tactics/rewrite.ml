@@ -899,24 +899,26 @@ let subterm all flags (s : 'a pure_strategy) : 'a pure_strategy =
       match kind_of_term t with
       | App (m, args) ->
 	  let rewrite_args success =
-	    let args', evars', progress =
+	    let state, args', evars', progress =
 	      Array.fold_left
-		(fun (acc, evars, progress) arg ->
-		  if not (Option.is_empty progress) && not all then (None :: acc, evars, progress)
+		(fun (state, acc, evars, progress) arg ->
+		  if not (Option.is_empty progress) && not all then
+		    (state, None :: acc, evars, progress)
 		  else
 		    let argty = Typing.type_of env (goalevars evars) arg in
 		    let state, res = s state env avoid arg argty (prop,None) evars in
 		      match res with
-		      | Some None -> (None :: acc, evars, 
-				      if Option.is_empty progress then Some false else progress)
+		      | Some None -> 
+			(state, None :: acc, evars, 
+			 if Option.is_empty progress then Some false else progress)
 		      | Some (Some r) -> 
-			(Some r :: acc, r.rew_evars, Some true)
-		      | None -> (None :: acc, evars, progress))
-		([], evars, success) args
+			(state, Some r :: acc, r.rew_evars, Some true)
+		      | None -> (state, None :: acc, evars, progress))
+		(state, [], evars, success) args
 	    in
-	      match progress with
-	      | None -> state, None
-	      | Some false -> state, Some None
+	    let res = match progress with
+	      | None -> None
+	      | Some false -> Some None
 	      | Some true ->
 		  let args' = Array.of_list (List.rev args') in
 		    if Array.exists
@@ -930,7 +932,7 @@ let subterm all flags (s : 'a pure_strategy) : 'a pure_strategy =
 		      let res = { rew_car = ty; rew_from = c1;
 				  rew_to = c2; rew_prf = RewPrf (rel, prf);
 				  rew_evars = evars' } 
-		      in state, Some (Some res)
+		      in Some (Some res)
 		    else 
 		      let args' = Array.map2
 			(fun aorig anew ->
@@ -940,8 +942,8 @@ let subterm all flags (s : 'a pure_strategy) : 'a pure_strategy =
 		      let res = { rew_car = ty; rew_from = t;
 				  rew_to = mkApp (m, args'); rew_prf = RewCast DEFAULTcast;
 				  rew_evars = evars' }
-		      in state, Some (Some res)
-
+		      in Some (Some res)
+	    in state, res
 	  in
 	    if flags.on_morphisms then
 	      let mty = Typing.type_of env (goalevars evars) m in

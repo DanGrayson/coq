@@ -64,7 +64,7 @@ val start_proof : Names.Id.t ->
 
 type closed_proof =
   Names.Id.t *
-  (Entries.definition_entry list * lemma_possible_guards *
+  (Entries.definition_entry list * Univ.constraints * lemma_possible_guards *
     Decl_kinds.goal_kind * unit Tacexpr.declaration_hook Ephemeron.key)
 
 (* Takes a function to add to the exceptions data relative to the

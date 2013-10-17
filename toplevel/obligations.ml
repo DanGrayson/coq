@@ -234,7 +234,8 @@ let eterm_obligations env name evm fs ?status t ty =
       (fun (id, (n, nstr), ev) l ->
 	 let hyps = Evd.evar_filtered_context ev in
 	 let hyps = trunc_named_context nc_len hyps in
-	 let evtyp, deps, transp = etype_of_evar l hyps ev.evar_concl in
+	 let concl = Evarutil.nf_evars_universes evm ev.evar_concl in
+	 let evtyp, deps, transp = etype_of_evar l hyps concl in
 	 let evtyp, hyps, chop =
 	   match chop_product fs evtyp with
 	   | Some t -> t, trunc_named_context fs hyps, fs
