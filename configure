@@ -636,10 +636,10 @@ case $COQIDE in
     byte|opt)
         case $lablgtkdir_spec in
             no)  LABLGTKLIB=+lablgtk2                   # Pour le message
-                 LABLGTKINCLUDES="-I \"$LABLGTKLIB\"";;     # Pour le makefile
+                 LABLGTKINCLUDES="-I \"$LABLGTKLIB\""     # Pour le makefile
                  LABLGTKINCLUDES2="-I \\\"$LABLGTKLIB\\\"";;     # Pour le include file
             yes) LABLGTKLIB="$lablgtkdir"               # Pour le message
-                 LABLGTKINCLUDES="-I \"$LABLGTKLIB\"";; # Pour le makefile
+                 LABLGTKINCLUDES="-I \"$LABLGTKLIB\"" # Pour le makefile
                  LABLGTKINCLUDES2="-I \\\"$LABLGTKLIB\\\"";;     # Pour le include file
         esac;;
     no) LABLGTKINCLUDES="";;
