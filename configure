@@ -638,7 +638,7 @@ case $COQIDE in
             no)  LABLGTKLIB=+lablgtk2                   # Pour le message
                  LABLGTKINCLUDES="-I \\\"$LABLGTKLIB\\\"";;     # Pour le makefile
             yes) LABLGTKLIB="$lablgtkdir"               # Pour le message
-                 LABLGTKINCLUDES="-I \"$LABLGTKLIB\"";; # Pour le makefile
+                 LABLGTKINCLUDES="-I \\\"$LABLGTKLIB\\\"";; # Pour le makefile
         esac;;
     no) LABLGTKINCLUDES="";;
 esac
