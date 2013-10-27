@@ -636,9 +636,11 @@ case $COQIDE in
     byte|opt)
         case $lablgtkdir_spec in
             no)  LABLGTKLIB=+lablgtk2                   # Pour le message
-                 LABLGTKINCLUDES="-I \\\"$LABLGTKLIB\\\"";;     # Pour le makefile
+                 LABLGTKINCLUDES="-I \"$LABLGTKLIB\"";;     # Pour le makefile
+                 LABLGTKINCLUDES2="-I \\\"$LABLGTKLIB\\\"";;     # Pour le include file
             yes) LABLGTKLIB="$lablgtkdir"               # Pour le message
-                 LABLGTKINCLUDES="-I \\\"$LABLGTKLIB\\\"";; # Pour le makefile
+                 LABLGTKINCLUDES="-I \"$LABLGTKLIB\"";; # Pour le makefile
+                 LABLGTKINCLUDES2="-I \\\"$LABLGTKLIB\\\"";;     # Pour le include file
         esac;;
     no) LABLGTKINCLUDES="";;
 esac
@@ -980,7 +982,7 @@ let camlp4o = "$camlp4oexec"
 let camlp4bin = "$CAMLP4BIN"
 let camlp4lib = "$CAMLP4LIB"
 let camlp4compat = "$CAMLP4COMPAT"
-let coqideincl = "$LABLGTKINCLUDES"
+let coqideincl = "$LABLGTKINCLUDES2"
 let cflags = "$cflags"
 let best = "$best_compiler"
 let arch = "$ARCH"
