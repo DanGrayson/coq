@@ -187,6 +187,7 @@ let subst_regular_ind_arity sub s =
 
 let subst_template_ind_arity sub s = s
 
+(* FIXME records *)
 let subst_ind_arity =
   subst_decl_arity subst_regular_ind_arity subst_template_ind_arity
 
@@ -255,10 +256,10 @@ let hcons_mind mib =
 (** {6 Stm machinery } *)
 
 let join_constant_body cb =
-  ignore(Future.join cb.const_universes);
-  match cb.const_body with
+  begin match cb.const_body with
   | OpaqueDef d -> ignore(Future.join d)
-  | _ -> ()
+  | _ -> () end;
+  ignore(Future.join cb.const_universes)
 
 let string_of_side_effect = function
   | SEsubproof (c,_) -> Names.string_of_con c
