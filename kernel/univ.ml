@@ -1561,8 +1561,6 @@ struct
 	  let h = !accu land 0x3FFFFFFF in
 	    (a, h)
       end
-
-  let hcons x = x
 	      
   let empty = hcons [||]
 
