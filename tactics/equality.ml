@@ -1273,9 +1273,10 @@ let swap_equands gls eqn =
 
 let swapEquandsInConcl gls =
   let (lbeq,u,eq_args) = find_eq_data (pf_env gls) (pf_concl gls) in
-    pf_constr_of_global lbeq.sym (fun sym_equal ->
-      refine
-	(applist(sym_equal,(swap_equality_args eq_args@[Evarutil.mk_new_meta()]))))
+    pf_constr_of_global lbeq.sym (fun sym_equal gl ->
+      let c = (applist(sym_equal,(swap_equality_args eq_args))) in
+      let sigma, cty = pf_apply Typing.e_type_of gl c in
+	refine (applist (c,[Evarutil.mk_new_meta()])) {gl with sigma})
     gls
 
 (* Refine from [|- P e2] to [|- P e1] and [|- e1=e2:>t] (body is P (Rel 1)) *)
@@ -1286,10 +1287,12 @@ let bareRevSubstInConcl (lbeq,u) body (t,e1,e2) gls =
     (Some false) false None None gls in
   (* build substitution predicate *)
   let p = lambda_create (pf_env gls) (t,body) in
+  let sigma, pty = pf_apply Typing.e_type_of gls p in
   (* apply substitution scheme *)
   pf_constr_of_global (ConstRef eq_elim) (fun c ->
     refine (applist(c,[t;e1;p;Evarutil.mk_new_meta();
-                       e2;Evarutil.mk_new_meta()]))) gls
+                       e2;Evarutil.mk_new_meta()]))) 
+    {gls with sigma}
 
 (* [subst_tuple_term dep_pair B]
 
@@ -1359,7 +1362,9 @@ let subst_tuple_term env sigma t dep_pair1 dep_pair2 b =
   let expected_goal = beta_applist (abst_B,List.map fst e2_list) in
   (* Simulate now the normalisation treatment made by Logic.mk_refgoals *)
   let expected_goal = nf_betaiota sigma expected_goal in
-    pred_body,expected_goal
+  (* Retype to get universes right *)
+  let sigma, expected_goal_ty = Typing.e_type_of env sigma expected_goal in
+    sigma,pred_body,expected_goal
 
 (* Like "replace" but decompose dependent equalities *)
 
@@ -1367,11 +1372,12 @@ exception NothingToRewrite
 
 let cutSubstInConcl_RL eqn gls =
   let (lbeq,u,(t,e1,e2 as eq)) = find_eq_data_decompose gls eqn in
-  let body,expected_goal = pf_apply subst_tuple_term gls t e2 e1 (pf_concl gls) in
+  let sigma,body,expected_goal = pf_apply subst_tuple_term gls t e2 e1 (pf_concl gls) in
   if not (dependent (mkRel 1) body) then raise NothingToRewrite;
     (tclTHENFIRST
        (bareRevSubstInConcl (lbeq,u) body eq)
-       (convert_concl expected_goal DEFAULTcast)) gls
+       (convert_concl expected_goal DEFAULTcast)) 
+      { gls with sigma }
 
 (* |- (P e1)
      BY CutSubstInConcl_LR (eq T e1 e2)
@@ -1388,12 +1394,13 @@ let cutSubstInConcl l2r =if l2r then cutSubstInConcl_LR else cutSubstInConcl_RL
 let cutSubstInHyp_LR eqn id gls =
   let (lbeq,u,(t,e1,e2 as eq)) = find_eq_data_decompose gls eqn in
   let idtyp = pf_get_hyp_typ gls id in
-  let body,expected_goal = pf_apply subst_tuple_term gls t e1 e2 idtyp in
+  let sigma,body,expected_goal = pf_apply subst_tuple_term gls t e1 e2 idtyp in
   if not (dependent (mkRel 1) body) then raise NothingToRewrite;
     (cut_replacing id expected_goal
        (tclTHENFIRST
 	  (bareRevSubstInConcl (lbeq,u) body eq)
-	  (refine_no_check (mkVar id)))) gls
+	  (refine_no_check (mkVar id)))) 
+      {gls with sigma}
 
 let cutSubstInHyp_RL eqn id gls =
   (tclTHENS (cutSubstInHyp_LR (swap_equands gls eqn) id)

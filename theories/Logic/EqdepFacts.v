@@ -52,7 +52,7 @@ Table of contents:
 
 Import EqNotations.
 
-Set Universe Polymorphism.
+(* Set Universe Polymorphism. *)
 
 Section Dependent_Equality.
 
@@ -118,7 +118,7 @@ Lemma eq_sigT_eq_dep :
   forall (U:Type) (P:U -> Type) (p q:U) (x:P p) (y:P q),
     existT P p x = existT P q y -> eq_dep p x q y.
 Proof.
-  intros.
+  intros. 
   dependent rewrite H. 
   apply eq_dep_intro.
 Qed.

@@ -245,10 +245,9 @@ let inversion_lemma_from_goal n na (loc,id) sort dep_option inv_op =
   add_inversion_lemma na env sigma t sort dep_option inv_op
 
 let add_inversion_lemma_exn na com comsort bool tac =
-  let env = Global.env () and sigma = Evd.empty in
-  let c,ctx = Constrintern.interp_type sigma env com in
-  let sigma = Evd.merge_context_set Evd.univ_rigid sigma ctx in
-  let sigma, sort = Pretyping.interp_sort sigma comsort in
+  let env = Global.env () and evd = ref Evd.empty in
+  let c = Constrintern.interp_type_evars evd env com in
+  let sigma, sort = Pretyping.interp_sort !evd comsort in
   try
     add_inversion_lemma na env sigma c sort bool tac
   with

@@ -347,6 +347,7 @@ let diff_evar_universe_context ctx' ctx  =
 type 'a in_evar_universe_context = 'a * evar_universe_context
 
 let evar_universe_context_set ctx = ctx.uctx_local
+let evar_universe_context_constraints ctx = snd ctx.uctx_local
 let evar_context_universe_context ctx = Univ.ContextSet.to_context ctx.uctx_local
 let evar_universe_context_of ctx = { empty_evar_universe_context with uctx_local = ctx }
 let evar_universe_context_subst ctx = ctx.uctx_univ_variables
@@ -1261,6 +1262,7 @@ let nf_constraints evd =
 (* let nf_constraints = Profile.profile1 nfconstrkey nf_constraints;; *)
 
 let universes evd = evd.universes.uctx_universes
+let constraints evd = evd.universes.uctx_universes
 
 (* Conversion w.r.t. an evar map and its local universes. *)
 

@@ -1196,7 +1196,7 @@ let vm_cast_no_check c gl =
 
 let exact_proof c gl =
   let c,ctx = Constrintern.interp_casted_constr (project gl) (pf_env gl) c (pf_concl gl)
-  in tclPUSHCONTEXT Evd.univ_flexible ctx (refine_no_check c) gl
+  in tclTHEN (tclPUSHEVARUNIVCONTEXT ctx) (refine_no_check c) gl
 
 let (assumption : tactic) = fun gl ->
   let concl = pf_concl gl in
@@ -1205,7 +1205,7 @@ let (assumption : tactic) = fun gl ->
     | [] ->
         if only_eq then arec false hyps else error "No such assumption."
     | (id,c,t)::rest ->
-	if (only_eq && eq_constr t concl) 
+	if (only_eq && Constr.equal t concl) 
         then refine_no_check (mkVar id) gl
         else if not only_eq then
 	  let evm,b = infer_conv (pf_env gl) (project gl) t concl

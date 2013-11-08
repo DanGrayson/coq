@@ -112,7 +112,7 @@ module Level = struct
   | Level (i, dp) ->
     Hashset.Combine.combine (Int.hash i) (DirPath.hash dp)
 
-  let equal u v = u == v
+  let equal u v = u == v || compare u v = 0
   let leq u v = compare u v <= 0
 
   let to_string = function
@@ -351,6 +351,7 @@ module Hashconsing = struct
       val iter : (elt -> 'a) -> t -> unit
       val exists : (elt -> bool) -> t -> bool
       val for_all : (elt -> bool) -> t -> bool
+      val for_all2 : (elt -> elt -> bool) -> t -> t -> bool
       val rev : t -> t
       val rev_map : (elt -> elt) -> t -> t
       val length : t -> int
@@ -450,6 +451,14 @@ module Hashconsing = struct
       in
 	loop l
 
+    let for_all2 f l r =
+      let rec loop l r = match l.Node.node, r.Node.node with
+	| Nil, Nil -> true
+	| Cons(a,aa), Cons(b,bb) -> f a b && loop aa bb
+	| _, _ -> false
+      in
+	loop l r
+
     let to_list l =
       let rec loop l = match l.Node.node with
 	| Nil -> []
@@ -539,7 +548,10 @@ struct
       external node : node -> data = "%identity"
       let hash = ExprHash.hash
       let uid = hash
-      let equal x y = x == y
+      let equal x y = x == y ||
+	(let (u,n) = x and (v,n') = y in
+	   Int.equal n n' && Level.equal u v)
+
       let stats _ = ()
       let init _ = ()
     end
@@ -575,9 +587,9 @@ struct
       | (l, 0) -> Level.is_small l
       | _ -> false
 
-    (* let equal (u,n) (v,n') = *)
-    (*   Int.equal n n' && Level.equal u v *)
-    let equal x y = x == y
+    let equal x y = x == y ||
+      (let (u,n) = x and (v,n') = y in
+	 Int.equal n n' && Level.equal u v)
 
     let leq (u,n) (v,n') =
       let cmp = Level.compare u v in
@@ -648,7 +660,7 @@ struct
   type t = Huniv.t
   open Huniv
     
-  let equal x y = x == y (* Huniv.equal *)
+  let equal x y = x == y || Huniv.for_all2 Expr.equal x y
 
   let hash = Huniv.hash
 
@@ -1149,7 +1161,7 @@ let compare_list cmp l1 l2 =
 
 let check_equal_expr g x y =
   x == y || (let (u, n) = Hunivelt.node x and (v, m) = Hunivelt.node y in 
-	       n = m && check_equal g u v)
+	       Int.equal n m && check_equal g u v)
 
 (** [check_eq] is also used in [Evd.set_eq_sort],
     hence [Evarconv] and [Unification]. In this case,
@@ -1428,6 +1440,8 @@ module UniverseConstraints = struct
   include S
   
   let add (l,d,r as cst) s = 
+    if (Option.is_empty (Universe.level r)) then 
+      prerr_endline "Algebraic universe on the right";
     if Universe.equal l r then s
     else add cst s
 
@@ -2198,7 +2212,9 @@ let remove_large_constraint u v min =
 let is_direct_constraint u v =
   match Universe.level v with
   | Some u' -> Level.equal u u'
-  | None -> Huniv.mem (Hunivelt.make (Universe.Expr.make u)) v
+  | None -> 
+    let expr = Universe.Expr.make u in
+      Universe.exists (Universe.Expr.equal expr) v
 
 (*
    Solve a system of universe constraint of the form
@@ -2241,9 +2257,9 @@ let solve_constraints_system levels level_bounds level_min =
 let subst_large_constraint u u' v =
   match level u with
   | Some u ->
-      if is_direct_constraint u v then 
+      (* if is_direct_constraint u v then  *)
 	Universe.sup u' (remove_large_constraint u v type0m_univ)
-      else v
+      (* else v *)
   | _ ->
       anomaly (Pp.str "expect a universe level")
 
@@ -2330,7 +2346,7 @@ let hcons_universe_set =
 let hcons_universe_context_set (v, c) = 
   (hcons_universe_set v, hcons_constraints c)
 
-let hcons_univ x = x (* Universe.hcons (Huniv.node x) *)
+let hcons_univ x = Universe.hcons (Huniv.node x)
 
 let explain_universe_inconsistency (o,u,v,p) =
     let pr_rel = function
