@@ -1125,7 +1125,7 @@ let compare_neq strict g arcu arcv =
         in
         find [] arc.lt
   in
-  cmp NLE [] [] [] [(arcu,Lazy.from_val [])]
+  cmp NLE [] [] [] [(arcu,Lazy.lazy_from_val [])]
 
 type fast_order = FastEQ | FastLT | FastLE | FastNLE
 
