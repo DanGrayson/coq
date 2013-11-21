@@ -1346,6 +1346,8 @@ let vernac_check_may_eval redexp glopt rc =
   let sigma' = Evarconv.consider_remaining_unif_problems env sigma' in
   Evarconv.check_problems_are_solved env sigma';
   let sigma',nf = Evarutil.nf_evars_and_universes sigma' in
+  let uctx = Evd.universe_context sigma' in
+  let env = Environ.push_context uctx env in
   let c = nf c in
   let j =
     try
@@ -1355,7 +1357,7 @@ let vernac_check_may_eval redexp glopt rc =
       Evarutil.j_nf_evar sigma' (Retyping.get_judgment_of env sigma' c) in
   match redexp with
     | None ->
-	msg_notice (print_judgment env j)
+	msg_notice (print_judgment env j ++ Printer.pr_universe_ctx uctx)
     | Some r ->
         Tacintern.dump_glob_red_expr r;
         let (sigma',r_interp) = interp_redexp env sigma' r in
@@ -1375,7 +1377,8 @@ let vernac_global_check c =
   let cstrs = snd (Evd.evar_universe_context_set ctx) in
   let senv = Safe_typing.add_constraints cstrs senv in
   let j = Safe_typing.typing senv c in
-  msg_notice (print_safe_judgment env j)
+  let env = Safe_typing.env_of_safe_env senv in
+    msg_notice (print_safe_judgment env j)
 
 let vernac_print = function
   | PrintTables -> msg_notice (print_tables ())

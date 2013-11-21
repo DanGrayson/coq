@@ -119,10 +119,10 @@ let infer_declaration ?(what="UNKNOWN") env kn dcl =
 		       proj_type = ty;
 		       proj_body = body }
 	    in 
-	    let body = mkProj (Option.get kn, mkRel 1) in
+	    let body' = mkProj (Option.get kn, mkRel 1) in
 	(* TODO: recognize projection *)
 	    let context, m = decompose_lam_n_assum (n + 1) body in 
-	    let body = it_mkLambda_or_LetIn body context in
+	    let body = it_mkLambda_or_LetIn body' context in
 	  (* let tj = infer_type env' (Option.get c.const_entry_type) in *)
 	      Def (Lazyconstr.from_val (hcons_constr body)),
 	      RegularArity (hcons_constr (Option.get c.const_entry_type)), Some pb
