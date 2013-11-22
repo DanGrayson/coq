@@ -87,7 +87,9 @@ let infer_declaration ?(what="UNKNOWN") env kn dcl =
   match dcl with
   | DefinitionEntry c ->
     let ctx, entry_body = c.const_entry_secctx, c.const_entry_body in
-      if c.const_entry_opaque && not (Option.is_empty c.const_entry_type) then
+      if c.const_entry_opaque && not (Option.is_empty c.const_entry_type) && 
+	not c.const_entry_polymorphic 
+      then
         let body_cst =
           Future.chain entry_body (fun (body, side_eff) ->
             let body = handle_side_effects env body side_eff in

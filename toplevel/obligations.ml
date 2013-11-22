@@ -644,7 +644,7 @@ let declare_obligation prg obl body uctx =
 	  const_entry_polymorphic = poly;
 	  const_entry_universes = uctx;
 	  const_entry_opaque = opaque;
-	  const_entry_inline_code = false} 
+	  const_entry_inline_code = false}
       in
     (** ppedrot: seems legit to have obligations as local *)
       let constant = Declare.declare_constant obl.obl_name ~local:true
