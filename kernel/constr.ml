@@ -477,7 +477,7 @@ let compare_head_gen_leq eq_universes eq_sorts leq_sorts eq leq t1 t2 =
   | Ind (c1,u1), Ind (c2,u2) -> eq_ind c1 c2 && eq_universes false u1 u2
   | Construct (c1,u1), Construct (c2,u2) -> eq_constructor c1 c2 && eq_universes false u1 u2
   | Case (_,p1,c1,bl1), Case (_,p2,c2,bl2) ->
-      eq p1 p2 & eq c1 c2 && Array.equal eq bl1 bl2
+      eq p1 p2 && eq c1 c2 && Array.equal eq bl1 bl2
   | Fix ((ln1, i1),(_,tl1,bl1)), Fix ((ln2, i2),(_,tl2,bl2)) ->
       Int.equal i1 i2 && Array.equal Int.equal ln1 ln2
       && Array.equal eq tl1 tl2 && Array.equal eq bl1 bl2

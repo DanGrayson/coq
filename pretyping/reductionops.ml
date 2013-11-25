@@ -1202,7 +1202,7 @@ let meta_reducible_instance evd b =
           let is_coerce = match s with CoerceToType -> true | _ -> false in
           if not is_coerce then irec g else u
 	 with Not_found -> u)
-    | Proj (p,c) when isMeta c or isCast c & isMeta (pi1 (destCast c)) ->
+    | Proj (p,c) when isMeta c || isCast c && isMeta (pi1 (destCast c)) ->
 	let m = try destMeta c with _ -> destMeta (pi1 (destCast c)) in
 	  (match
 	  try

@@ -678,7 +678,7 @@ let find_appl_head_data c =
     let scopes = find_arguments_scope ref in
       x, isproj, impls, scopes, []
   | GApp (_,GRef (_,ref,_),l) as x
-      when l != [] & Flags.version_strictly_greater Flags.V8_2 ->
+      when l != [] && Flags.version_strictly_greater Flags.V8_2 ->
       let n = List.length l in
       let impls = implicits_of_global ref in 
       let isproj, impls = 
