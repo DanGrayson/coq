@@ -1686,22 +1686,23 @@ struct
     
   let hash = HInstancestruct.hash
     
-  let share a =
-    let len = Array.length a in
-      if Int.equal len 0 then (empty, 0)
-      else begin
-	let accu = ref 0 in
-	  for i = 0 to len - 1 do
-	    let l = Array.unsafe_get a i in
-	    let l', h = Level.hcons l, Level.hash l in
-	      accu := Hashset.Combine.combine !accu h;
-	      if l' == l then () 
-	      else Array.unsafe_set a i l'
-	  done;
-	  (* [h] must be positive. *)
-	  let h = !accu land 0x3FFFFFFF in
-	    (a, h)
-      end
+  let share a = (a, hash a)
+
+    (* let len = Array.length a in *)
+    (*   if Int.equal len 0 then (empty, 0) *)
+    (*   else begin *)
+    (* 	let accu = ref 0 in *)
+    (* 	  for i = 0 to len - 1 do *)
+    (* 	    let l = Array.unsafe_get a i in *)
+    (* 	    let l', h = Level.hcons l, Level.hash l in *)
+    (* 	      accu := Hashset.Combine.combine !accu h; *)
+    (* 	      if l' == l then ()  *)
+    (* 	      else Array.unsafe_set a i l' *)
+    (* 	  done; *)
+    (* 	  (\* [h] must be positive. *\) *)
+    (* 	  let h = !accu land 0x3FFFFFFF in *)
+    (* 	    (a, h) *)
+    (*   end *)
 	      
   let empty = hcons [||]
 
@@ -2486,7 +2487,7 @@ let hcons_universe_set =
 let hcons_universe_context_set (v, c) = 
   (hcons_universe_set v, hcons_constraints c)
 
-let hcons_univ x = Universe.hcons (Huniv.node x)
+let hcons_univ x = x(* Universe.hcons (Huniv.node x) *)
 
 let explain_universe_inconsistency (o,u,v,p) =
     let pr_rel = function

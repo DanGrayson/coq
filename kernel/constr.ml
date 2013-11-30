@@ -675,6 +675,7 @@ let hasheq t1 t2 =
     | LetIn (n1,b1,t1,c1), LetIn (n2,b2,t2,c2) ->
       n1 == n2 && b1 == b2 && t1 == t2 && c1 == c2
     | App (c1,l1), App (c2,l2) -> c1 == c2 && array_eqeq l1 l2
+    | Proj (p1,c1), Proj(p2,c2) -> p1 == p2 && c1 == c2
     | Evar (e1,l1), Evar (e2,l2) -> Evar.equal e1 e2 && array_eqeq l1 l2
     | Const (c1,u1), Const (c2,u2) -> c1 == c2 && u1 == u2
     | Ind ((sp1,i1),u1), Ind ((sp2,i2),u2) -> 
@@ -758,7 +759,7 @@ let hashcons (sh_sort,sh_ci,sh_construct,sh_ind,sh_con,sh_na,sh_id) =
       | Proj (p,c) ->
         let c, hc = sh_rec c in
 	let p' = sh_con p in
-	  (Proj (p', c), combinesmall 17 (Constant.hash p'))
+	  (Proj (p', c), combinesmall 17 (combine (Constant.hash p') hc))
       | Const (c,u) ->
 	let c' = sh_con c in
 	let u', hu = sh_instance u in
@@ -903,9 +904,24 @@ module Hcaseinfo =
 let hcons_sorts = Hashcons.simple_hcons Hsorts.generate hcons_univ
 let hcons_caseinfo = Hashcons.simple_hcons Hcaseinfo.generate hcons_ind
 
-let hcons_pconstruct (c,u) = (hcons_construct c, Univ.Instance.hcons u)
-let hcons_pind (i,u) = (hcons_ind i, Univ.Instance.hcons u)
-let hcons_pcon (c,u) = (hcons_con c, Univ.Instance.hcons u)
+let hcons_pconstruct (c,u as x) = 
+  let c' = hcons_construct c in 
+    if c' == c then x
+    else (c', u)
+
+let hcons_pind (i,u as x) = 
+  let i' = hcons_ind i in 
+    if i' == i then x 
+    else i', u
+
+let hcons_pcon (c,u as x) =
+  let c' = hcons_con c in
+    if c' == c then x
+    else c', u
+
+(* let hcons_pconstruct (c,u) = (hcons_construct c, Univ.Instance.hcons u) *)
+(* let hcons_pind (i,u) = (hcons_ind i, Univ.Instance.hcons u) *)
+(* let hcons_pcon (c,u) = (hcons_con c, Univ.Instance.hcons u) *)
 
 let hcons =
   hashcons
