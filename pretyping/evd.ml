@@ -532,21 +532,8 @@ let is_univ_var_or_set u =
   Univ.is_univ_variable u || u = Univ.type0_univ
 
 let set_leq_sort ({evars = (sigma, (us, sm))} as d) s1 s2 =
-  match is_eq_sort s1 s2 with
-  | None -> d
-  | Some (u1, u2) ->
-      match s1, s2 with
-      | Prop c, Prop c' -> 
-	  if c = Null && c' = Pos then d
-	  else (raise (Univ.UniverseInconsistency (Univ.Le, u1, u2)))
-     | Type u, Prop c -> 
-	  if c = Pos then 
-	    add_constraints d (Univ.enforce_geq Univ.type0_univ u Univ.empty_constraint)
-	  else raise (Univ.UniverseInconsistency (Univ.Le, u1, u2))
-      | _, Type u ->
-	  if is_univ_var_or_set u then
-	    add_constraints d (Univ.enforce_geq u2 u1 Univ.empty_constraint)
-	  else raise (Univ.UniverseInconsistency (Univ.Le, u1, u2))
+  (* further patch for Type in Type *) 
+  d
 
 let is_univ_level_var us u =
   match Univ.universe_level u with
