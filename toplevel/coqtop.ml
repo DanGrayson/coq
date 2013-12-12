@@ -184,6 +184,7 @@ let parse_args arglist =
     | "-byte" :: rem -> warning "option -byte deprecated, call with .byte suffix\n"; parse rem
     | "-full" :: rem -> warning "option -full deprecated\n"; parse rem
 
+    | "-no-sharing" :: rem -> Closure.share := false; parse rem
     | "-batch" :: rem -> set_batch_mode (); parse rem
     | "-boot" :: rem -> boot := true; no_load_rc (); parse rem
     | "-quality" :: rem -> term_quality := true; no_load_rc (); parse rem

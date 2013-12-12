@@ -69,6 +69,7 @@ let print_usage_channel co command =
 \n  -xml                   export XML files either to the hierarchy rooted in\
 \n                         the directory $COQ_XML_LIBRARY_ROOT (if set) or to\
 \n                         stdout (if unset)\
+\n  -no-sharing            turn off sharing\
 \n  -quality               improve the legibility of the proof terms produced by\
 \n                         some tactics\
 \n  -h, --help             print this list of options\
