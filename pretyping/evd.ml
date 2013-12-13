@@ -642,23 +642,8 @@ let is_univ_var_or_set u =
   Univ.is_univ_variable u || Univ.is_type0_univ u
 
 let set_leq_sort evd s1 s2 =
-  match is_eq_sort s1 s2 with
-  | None -> evd
-  | Some (u1, u2) ->
-    match s1, s2 with
-    | Prop Null, Prop Pos -> evd
-    | Prop _, Prop _ ->
-      raise (Univ.UniverseInconsistency (Univ.Le, u1, u2,[]))
-    | Type u, Prop Pos ->
-      let cstr = Univ.enforce_leq u Univ.type0_univ Univ.empty_constraint in
-      add_constraints evd cstr
-    | Type _, Prop _ ->
-      raise (Univ.UniverseInconsistency (Univ.Le, u1, u2,[]))
-    | _, Type u ->
-      if is_univ_var_or_set u then
-        let cstr = Univ.enforce_leq u1 u2 Univ.empty_constraint in
-        add_constraints evd cstr
-      else raise (Univ.UniverseInconsistency (Univ.Le, u1, u2,[]))
+  (* further patch for Type in Type *) 
+  evd
 
 let is_univ_level_var us u =
   match Univ.universe_level u with
@@ -666,23 +651,8 @@ let is_univ_level_var us u =
   | None -> false
 
 let set_eq_sort ({ universes = us; univ_cstrs = sm; } as d) s1 s2 =
-  match is_eq_sort s1 s2 with
-  | None -> d
-  | Some (u1, u2) ->
-      match s1, s2 with
-      | Prop c, Type u when is_univ_level_var us u ->
-	  add_constraints d (Univ.enforce_eq u1 u2 Univ.empty_constraint)
-      | Type u, Prop c when is_univ_level_var us u ->
-	  add_constraints d (Univ.enforce_eq u1 u2 Univ.empty_constraint)
-      | Type u, Type v when (is_univ_level_var us u) || (is_univ_level_var us v) ->
-	  add_constraints d (Univ.enforce_eq u1 u2 Univ.empty_constraint)
-      | Prop c, Type u when is_univ_var_or_set u &&
-	  Univ.lax_check_eq sm u1 u2 -> d
-      | Type u, Prop c when is_univ_var_or_set u &&
-          Univ.lax_check_eq sm u1 u2 -> d
-      | Type u, Type v when is_univ_var_or_set u && is_univ_var_or_set v ->
-	  add_constraints d (Univ.enforce_eq u1 u2 Univ.empty_constraint)
-      | _, _ -> raise (Univ.UniverseInconsistency (Univ.Eq, u1, u2, []))
+  (* further patch for Type in Type *) 
+  d
 	    
 (**********************************************************)
 (* Accessing metas *)

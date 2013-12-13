@@ -29,6 +29,7 @@ open Environ
 open Esubst
 
 let stats = ref false
+(* apply fix-hanging-at-end-of-proof.patch *)
 let share = ref true
 
 (* Profiling *)

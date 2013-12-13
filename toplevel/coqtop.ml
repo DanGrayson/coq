@@ -326,6 +326,8 @@ let parse_args arglist =
     |"-vm" -> use_vm := true
     |"-where" -> print_where := true
     |"-xml" -> Flags.xml_export := true
+    |"-no-sharing" -> Closure.share := false
+    |"-indices-matter" -> () (* we've hard-wired this option on *)
 
     (* Deprecated options *)
     |"-byte" -> warning "option -byte deprecated, call with .byte suffix"
