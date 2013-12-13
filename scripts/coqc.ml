@@ -144,7 +144,7 @@ let parse_args () =
     | ("-notactics"|"-debug"|"-nolib"|"-boot"
       |"-batch"|"-nois"|"-noglob"|"-no-glob"
       |"-q"|"-full"|"-profile"|"-just-parsing"|"-echo" |"-unsafe"|"-quiet"
-      |"-silent"|"-m"|"-xml"|"-v7"|"-v8"|"-beautify"|"-strict-implicit"|"-no-sharing"
+      |"-silent"|"-m"|"-xml"|"-v7"|"-v8"|"-beautify"|"-strict-implicit"|"-no-sharing"|"-indices-matter"
       |"-dont-load-proofs"|"-load-proofs"|"-force-load-proofs"
       |"-impredicative-set"|"-vm" as o) :: rem ->
 	parse (cfiles,o::args) rem
