@@ -1,3 +1,4 @@
+N*.native
 *.glob
 *.d
 *.d.raw
