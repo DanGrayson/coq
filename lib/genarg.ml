@@ -12,7 +12,7 @@ open Util
 type argument_type =
   (* Basic types *)
   | IntOrVarArgType
-  | IdentArgType of bool
+  | IdentArgType
   | VarArgType
   (* Specific types *)
   | GenArgType
@@ -30,7 +30,7 @@ type argument_type =
 
 let rec argument_type_eq arg1 arg2 = match arg1, arg2 with
 | IntOrVarArgType, IntOrVarArgType -> true
-| IdentArgType b1, IdentArgType b2 -> (b1 : bool) == b2
+| IdentArgType, IdentArgType -> true
 | VarArgType, VarArgType -> true
 | GenArgType, GenArgType -> true
 | ConstrArgType, ConstrArgType -> true
@@ -49,8 +49,7 @@ let rec argument_type_eq arg1 arg2 = match arg1, arg2 with
 
 let rec pr_argument_type = function
 | IntOrVarArgType -> str "int_or_var"
-| IdentArgType true -> str "ident"
-| IdentArgType false -> str "pattern_ident"
+| IdentArgType -> str "ident"
 | VarArgType -> str "var"
 | GenArgType -> str "genarg"
 | ConstrArgType -> str "constr"
@@ -195,6 +194,7 @@ module type GenObj =
 sig
   type ('raw, 'glb, 'top) obj
   val name : string
+  val default : ('raw, 'glb, 'top) genarg_type -> ('raw, 'glb, 'top) obj option
 end
 
 module Register (M : GenObj) =
@@ -214,7 +214,10 @@ struct
   let get_obj0 name =
     try String.Map.find name !arg0_map
     with Not_found ->
-      Errors.anomaly (str M.name ++ str " function not found: " ++ str name)
+      match M.default (ExtraArgType name) with
+      | None ->
+        Errors.anomaly (str M.name ++ str " function not found: " ++ str name)
+      | Some obj -> obj
 
   (** For now, the following function is quite dummy and should only be applied
       to an extra argument type, otherwise, it will badly fail. *)

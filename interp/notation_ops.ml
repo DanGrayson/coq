@@ -104,7 +104,7 @@ let glob_constr_of_notation_constr_with_binders loc g f e = function
       GRec (loc,fk,idl,dll,Array.map (f e) tl,Array.map (f e') bl)
   | NCast (c,k) -> GCast (loc,f e c,Miscops.map_cast_type (f e) k)
   | NSort x -> GSort (loc,x)
-  | NHole x  -> GHole (loc, x, None)
+  | NHole (x, arg)  -> GHole (loc, x, arg)
   | NPatVar n -> GPatVar (loc,(false,n))
   | NRef x -> GRef (loc,x)
 
@@ -287,7 +287,7 @@ let notation_constr_and_vars_of_glob_constr a =
       NRec (fk,idl,dll,Array.map aux tl,Array.map aux bl)
   | GCast (_,c,k) -> NCast (aux c,Miscops.map_cast_type aux k)
   | GSort (_,s) -> NSort s
-  | GHole (_,w,_) -> NHole w
+  | GHole (_,w,arg) -> NHole (w, arg)
   | GRef (_,r) -> NRef r
   | GPatVar (_,(_,n)) -> NPatVar n
   | GEvar _ ->
@@ -300,10 +300,12 @@ let notation_constr_and_vars_of_glob_constr a =
 
 let pair_equal eq1 eq2 (a,b) (a',b') = eq1 a a' && eq2 b b'
 
-let check_variables vars recvars (found,foundrec,foundrecbinding) =
+let check_variables nenv (found,foundrec,foundrecbinding) =
+  let recvars = nenv.ninterp_rec_vars in
   let fold _ y accu = Id.Set.add y accu in
   let useless_vars = Id.Map.fold fold recvars Id.Set.empty in
-  let vars = Id.Map.filter (fun y _ -> not (Id.Set.mem y useless_vars)) vars in
+  let filter y _ = not (Id.Set.mem y useless_vars) in
+  let vars = Id.Map.filter filter nenv.ninterp_var_type in
   let check_recvar x =
     if Id.List.mem x found then
       errorlabstrm "" (pr_id x ++
@@ -321,8 +323,7 @@ let check_variables vars recvars (found,foundrec,foundrecbinding) =
 	error
           (Id.to_string x ^
           " should not be bound in a recursive pattern of the right-hand side.")
-      else
-	error (Id.to_string x ^ " is unbound in the right-hand side.")
+      else nenv.ninterp_only_parse <- true
   in
   let check_pair s x y where =
     if not (List.mem_f (pair_equal Id.equal Id.equal) (x,y) where) then
@@ -344,16 +345,21 @@ let check_variables vars recvars (found,foundrec,foundrecbinding) =
     | NtnInternTypeIdent -> check_bound x in
   Id.Map.iter check_type vars
 
-let notation_constr_of_glob_constr vars recvars a =
-  let a,found = notation_constr_and_vars_of_glob_constr a in
-  check_variables vars recvars found;
+let notation_constr_of_glob_constr nenv a =
+  let a, found = notation_constr_and_vars_of_glob_constr a in
+  let () = check_variables nenv found in
   a
 
 (* Substitution of kernel names, avoiding a list of bound identifiers *)
 
 let notation_constr_of_constr avoiding t =
   let t = Detyping.detype false avoiding [] t in
-  notation_constr_of_glob_constr Id.Map.empty Id.Map.empty t
+  let nenv = {
+    ninterp_var_type = Id.Map.empty;
+    ninterp_rec_vars = Id.Map.empty;
+    ninterp_only_parse = false;
+  } in
+  notation_constr_of_glob_constr nenv t
 
 let rec subst_pat subst pat =
   match pat with
@@ -459,14 +465,16 @@ let rec subst_notation_constr subst bound raw =
 
   | NPatVar _ | NSort _ -> raw
 
-  | NHole (Evar_kinds.ImplicitArg (ref,i,b)) ->
-      let ref',t = subst_global subst ref in
-	if ref' == ref then raw else
-	  NHole (Evar_kinds.InternalHole)
-  | NHole (Evar_kinds.BinderType _ |Evar_kinds.QuestionMark _
-	  |Evar_kinds.CasesType |Evar_kinds.InternalHole
-	  |Evar_kinds.TomatchTypeParameter _ |Evar_kinds.GoalEvar
-	  |Evar_kinds.ImpossibleCase |Evar_kinds.MatchingVar _) -> raw
+  | NHole (knd, solve) ->
+    let nknd = match knd with
+    | Evar_kinds.ImplicitArg (ref, i, b) ->
+      let nref, _ = subst_global subst ref in
+      if nref == ref then knd else Evar_kinds.ImplicitArg (nref, i, b)
+    | _ -> knd
+    in
+    let nsolve = Option.smartmap (Genintern.generic_substitute subst) solve in
+    if nsolve == solve && nknd = knd then raw
+    else NHole (nknd, nsolve)
 
   | NCast (r1,k) ->
       let r1' = subst_notation_constr subst bound r1 in
@@ -494,7 +502,7 @@ let abstract_return_type_context_glob_constr =
 
 let abstract_return_type_context_notation_constr =
   abstract_return_type_context snd
-    (fun na c -> NLambda(na,NHole Evar_kinds.InternalHole,c))
+    (fun na c -> NLambda(na,NHole (Evar_kinds.InternalHole, None),c))
 
 exception No_match
 

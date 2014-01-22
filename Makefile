@@ -166,7 +166,7 @@ cruftclean: ml4clean
 indepclean:
 	rm -f $(GENFILES)
 	rm -f $(COQTOPBYTE) $(CHICKENBYTE) bin/fake_ide
-	find . -name '*~' -o -name '*.cm[ioa]' | xargs rm -f
+	find . \( -name '*~' -o -name '*.cm[ioat]' -o -name '*.cmti' \) -delete
 	rm -f */*.pp[iox] plugins/*/*.pp[iox]
 	rm -rf $(SOURCEDOCDIR)
 	rm -f toplevel/mltop.byteml toplevel/mltop.optml
@@ -222,7 +222,7 @@ cleanconfig:
 distclean: clean cleanconfig
 
 voclean:
-	find theories plugins test-suite -name '*.vo' -o -name '*.glob' -o -name "*.cmxs" -o -name "*.native" -o -name "*.cmx" -o -name "*.cmi" -o -name "*.o" | xargs rm -f
+	find theories plugins test-suite \( -name '*.vo' -o -name '*.glob' -o -name "*.cmxs" -o -name "*.native" -o -name "*.cmx" -o -name "*.cmi" -o -name "*.o" -o -name '.*.aux' \) -delete
 
 devdocclean:
 	find . -name '*.dep.ps' -o -name '*.dot' | xargs rm -f
@@ -249,17 +249,6 @@ tags:
 	echo $(ML4FILES) | sort -r | xargs \
 	etags --append --language=none\
 	      "--regex=/[ \t]*\([^: \t]+\)[ \t]*:/\1/"
-
-
-%.elc: %.el
-ifdef COQ_CONFIGURED
-	echo "(setq load-path (cons \".\" load-path))" > $*.compile
-	echo "(byte-compile-file \"$<\")" >> $*.compile
-	- $(EMACS) -batch -l $*.compile
-	rm -f $*.compile
-else
-	@echo "Please run ./configure first" >&2; exit 1
-endif
 
 # Useful to check that the exported variables are within the win32 limits
 

@@ -50,7 +50,7 @@ let adjust_guardness_conditions const = function
   (* Try all combinations... not optimal *)
      let env = Global.env() in
      { const with const_entry_body =
-        Future.chain ~pure:true const.const_entry_body
+        Future.chain ~greedy:true ~pure:true const.const_entry_body
         (fun (body, eff) ->
           match kind_of_term body with
           | Fix ((nv,0),(_,_,fixdefs as fixdecls)) ->
@@ -186,7 +186,7 @@ let save id const do_guard (locality,kind) hook =
 	Autoinstance.search_declaration (ConstRef kn);
 	(locality, ConstRef kn) in
   definition_message id;
-  Ephemeron.iter_opt hook (fun f -> f l r)
+  hook l r
 
 let default_thm_id = Id.of_string "Unnamed_thm"
 
@@ -234,7 +234,8 @@ let save_remaining_recthms (locality,kind) body opaq i (id,(t_i,(_,imps))) =
               const_entry_secctx = None;
               const_entry_type = Some t_i;
               const_entry_opaque = opaq;
-              const_entry_inline_code = false
+              const_entry_inline_code = false;
+              const_entry_feedback = None;
           } in
 	  let c = SectionLocalDef const in
 	  let _ = declare_variable id (Lib.cwd(), c, k) in
@@ -250,7 +251,8 @@ let save_remaining_recthms (locality,kind) body opaq i (id,(t_i,(_,imps))) =
             const_entry_secctx = None;
             const_entry_type = Some t_i;
             const_entry_opaque = opaq;
-            const_entry_inline_code = false
+            const_entry_inline_code = false;
+            const_entry_feedback = None;
         } in
         let kn = declare_constant id ~local (DefinitionEntry const, k) in
         (locality,ConstRef kn,imps)
@@ -291,7 +293,7 @@ let admit hook () =
       str "declared as an axiom.")
   in
   let () = assumption_message id in
-  Ephemeron.iter_opt hook (fun f -> f Global (ConstRef kn))
+  hook Global (ConstRef kn)
 
 (* Starting a goal *)
 
@@ -305,21 +307,22 @@ let get_proof proof do_guard hook opacity =
   in
   id,{const with const_entry_opaque = opacity},do_guard,persistence,hook
 
+let standard_proof_terminator compute_guard hook =
+  let open Proof_global in function
+  | Admitted ->
+      admit hook ();
+      Pp.feedback Interface.AddedAxiom
+  | Proved (is_opaque,idopt,proof) ->
+      let proof = get_proof proof compute_guard hook is_opaque in
+      begin match idopt with
+      | None -> save_named proof
+      | Some ((_,id),None) -> save_anonymous proof id
+      | Some ((_,id),Some kind) -> 
+          save_anonymous_with_strength proof kind id
+      end
+
 let start_proof id kind ?sign c ?init_tac ?(compute_guard=[]) hook =
-  let hook = Ephemeron.create hook in
-  let terminator = let open Proof_global in function
-    | Admitted ->
-        admit hook ();
-        Pp.feedback Interface.AddedAxiom
-    | Proved (is_opaque,idopt,proof) ->
-        let proof = get_proof proof compute_guard hook is_opaque in
-        begin match idopt with
-        | None -> save_named proof
-        | Some ((_,id),None) -> save_anonymous proof id
-        | Some ((_,id),Some kind) -> 
-            save_anonymous_with_strength proof kind id
-        end
-  in
+  let terminator = standard_proof_terminator compute_guard hook in
   let sign = 
     match sign with
     | Some sign -> sign
@@ -402,7 +405,7 @@ let start_proof_com kind thms hook =
 
 let save_proof ?proof = function
   | Vernacexpr.Admitted ->
-      Ephemeron.get (Proof_global.get_terminator()) Proof_global.Admitted
+      Proof_global.get_terminator() Proof_global.Admitted
   | Vernacexpr.Proved (is_opaque,idopt) ->
       let (proof_obj,terminator) =
         match proof with
@@ -411,7 +414,7 @@ let save_proof ?proof = function
       in
       (* if the proof is given explicitly, nothing has to be deleted *)
       if Option.is_empty proof then Pfedit.delete_current_proof ();
-      Ephemeron.get terminator (Proof_global.Proved (is_opaque,idopt,proof_obj))
+      terminator (Proof_global.Proved (is_opaque,idopt,proof_obj))
 
 (* Miscellaneous *)
 

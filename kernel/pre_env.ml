@@ -22,14 +22,25 @@ open Declarations
 
 (* The type of environments. *)
 
+(* The key attached to each constant is used by the VM to retrieve previous *)
+(* evaluations of the constant. It is essentially an index in the symbols table *)
+(* used by the VM. *)
+type key = int Ephemeron.key option ref 
 
-type key = int option ref
+(** Linking information for the native compiler. *)
 
-type constant_key = constant_body * key
+type link_info =
+  | Linked of string
+  | LinkedInteractive of string
+  | NotLinked
+
+type constant_key = constant_body * (link_info ref * key)
+
+type mind_key = mutual_inductive_body * link_info ref
 
 type globals = {
   env_constants : constant_key Cmap_env.t;
-  env_inductives : mutual_inductive_body Mindmap_env.t;
+  env_inductives : mind_key Mindmap_env.t;
   env_modules : module_body MPmap.t;
   env_modtypes : module_type_body MPmap.t}
 
@@ -39,7 +50,7 @@ type stratification = {
 }
 
 type val_kind =
-    | VKvalue of values * Id.Set.t
+    | VKvalue of (values * Id.Set.t) Ephemeron.key
     | VKnone
 
 type lazy_val = val_kind ref
@@ -139,5 +150,7 @@ let lookup_constant kn env =
 
 (* Mutual Inductives *)
 let lookup_mind kn env =
-  Mindmap_env.find kn env.env_globals.env_inductives
+  fst (Mindmap_env.find kn env.env_globals.env_inductives)
 
+let lookup_mind_key kn env =
+  Mindmap_env.find kn env.env_globals.env_inductives

@@ -24,7 +24,7 @@ type notation_constr =
   | NRef of global_reference
   | NVar of Id.t
   | NApp of notation_constr * notation_constr list
-  | NHole of Evar_kinds.t
+  | NHole of Evar_kinds.t * Genarg.glob_generic_argument option
   | NList of Id.t * Id.t * notation_constr * notation_constr * bool
   (** Part only in [glob_constr] *)
   | NLambda of Name.t * notation_constr * notation_constr
@@ -73,3 +73,9 @@ type notation_var_internalization_type =
 type interpretation =
     (Id.t * (subscopes * notation_var_instance_type)) list *
     notation_constr
+
+type notation_interp_env = {
+  ninterp_var_type : notation_var_internalization_type Id.Map.t;
+  ninterp_rec_vars : Id.t Id.Map.t;
+  mutable ninterp_only_parse : bool;
+}

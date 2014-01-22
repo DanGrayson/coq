@@ -69,7 +69,7 @@ let red_constant_entry n ce = function
   | Some red ->
       let proof_out = ce.const_entry_body in
       let env = Global.env () in
-      { ce with const_entry_body = Future.chain ~pure:true proof_out
+      { ce with const_entry_body = Future.chain ~greedy:true ~pure:true proof_out
         (fun (body,eff) ->
            under_binders env
              (fst (reduction_of_red_expr env red)) n body,eff) }
@@ -89,7 +89,8 @@ let interp_definition bl red_option c ctypopt =
           const_entry_secctx = None;
 	  const_entry_type = None;
           const_entry_opaque = false;
-	  const_entry_inline_code = false
+          const_entry_inline_code = false;
+          const_entry_feedback = None;
 	}
     | Some ctyp ->
 	let ty, impsty = interp_type_evars_impls ~impls evdref env_bl ctyp in
@@ -112,7 +113,8 @@ let interp_definition bl red_option c ctypopt =
           const_entry_secctx = None;
 	  const_entry_type = Some typ;
           const_entry_opaque = false;
-	  const_entry_inline_code = false
+          const_entry_inline_code = false;
+          const_entry_feedback = None;
 	}
   in
   red_constant_entry (rel_context_length ctx) ce red_option, !evdref, imps
@@ -536,7 +538,8 @@ let declare_fix kind f def t imps =
     const_entry_secctx = None;
     const_entry_type = Some t;
     const_entry_opaque = false;
-    const_entry_inline_code = false
+    const_entry_inline_code = false;
+    const_entry_feedback = None;
   } in
   declare_definition f kind ce imps (fun _ r -> r)
 
@@ -617,8 +620,7 @@ let nf_evar_context sigma ctx =
 
 let build_wellfounded (recname,n,bl,arityc,body) r measure notation =
   Coqlib.check_required_library ["Coq";"Program";"Wf"];
-  let sigma = Evd.empty in
-  let evdref = ref (Evd.create_evar_defs sigma) in
+  let evdref = ref Evd.empty in
   let env = Global.env() in
   let _, ((env', binders_rel), impls) = interp_context_evars evdref env bl in
   let len = List.length binders_rel in
@@ -726,9 +728,10 @@ let build_wellfounded (recname,n,bl,arityc,body) r measure notation =
           { const_entry_body = Future.from_val (Evarutil.nf_evar !evdref body,Declareops.no_seff);
             const_entry_secctx = None;
 	    const_entry_type = Some ty;
-        const_entry_opaque = false;
-        const_entry_inline_code = false}
-	in 
+            const_entry_opaque = false;
+            const_entry_inline_code = false;
+            const_entry_feedback = None;
+        } in 
 	(** FIXME: include locality *)
 	let c = Declare.declare_constant recname (DefinitionEntry ce, IsDefinition Definition) in
 	let gr = ConstRef c in

@@ -18,10 +18,6 @@
     line to a process running "coqtop -batch -compile <file>".
 *)
 
-(* Environment *)
-
-let environment = Unix.environment ()
-
 let binary = ref "coqtop"
 let image = ref ""
 
@@ -67,19 +63,7 @@ let rec make_compilation_args = function
 
 let compile command args files =
   let args' = command :: args @ (make_compilation_args files) in
-  match Sys.os_type with
-  | "Win32" ->
-     let pid =
-        Unix.create_process_env command (Array.of_list args') environment
-        Unix.stdin Unix.stdout Unix.stderr
-     in
-     let status = snd (Unix.waitpid [] pid) in
-     let errcode =
-       match status with Unix.WEXITED c|Unix.WSTOPPED c|Unix.WSIGNALED c -> c
-     in
-     exit errcode
-  | _ ->
-     Unix.execvpe command (Array.of_list args') environment
+  Unix.execvp command (Array.of_list args')
 
 let usage () =
   Usage.print_usage_coqc () ;
@@ -128,14 +112,16 @@ let parse_args () =
 
 (* Options for coqtop : a) options with 0 argument *)
 
-    | ("-notactics"|"-debug"|"-nolib"|"-boot"|"-time"
+    | ("-notactics"|"-bt"|"-debug"|"-nolib"|"-boot"|"-time"
       |"-batch"|"-noinit"|"-nois"|"-noglob"|"-no-glob"
       |"-q"|"-full"|"-profile"|"-just-parsing"|"-echo" |"-unsafe"|"-quiet"
       |"-silent"|"-m"|"-xml"|"-v7"|"-v8"|"-beautify"|"-strict-implicit"
       |"-dont-load-proofs"|"-load-proofs"|"-force-load-proofs"
       |"-impredicative-set"|"-vm"|"-no-native-compiler"
       |"-no-sharing"|"-indices-matter"
-      |"-verbose-compat-notations"|"-no-compat-notations" as o) :: rem ->
+      |"-verbose-compat-notations"|"-no-compat-notations"
+      |"-quick"
+      as o) :: rem ->
 	parse (cfiles,o::args) rem
 
 (* Options for coqtop : b) options with 1 argument *)
@@ -143,7 +129,9 @@ let parse_args () =
     | ("-outputstate"|"-inputstate"|"-is"|"-exclude-dir"
       |"-load-vernac-source"|"-l"|"-load-vernac-object"
       |"-load-ml-source"|"-require"|"-load-ml-object"
-      |"-init-file"|"-dump-glob"|"-compat"|"-coqlib" as o) :: rem ->
+      |"-init-file"|"-dump-glob"|"-compat"|"-coqlib"
+      |"-async-proofs-j" |"-async-proofs-worker-flags" |"-async-proofs"
+      as o) :: rem ->
 	begin
 	  match rem with
 	    | s :: rem' -> parse (cfiles,s::o::args) rem'

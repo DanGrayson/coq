@@ -191,7 +191,7 @@ val app_pair :
 type argument_type =
   (** Basic types *)
   | IntOrVarArgType
-  | IdentArgType of bool
+  | IdentArgType
   | VarArgType
   (** Specific types *)
   | GenArgType
@@ -227,6 +227,9 @@ sig
 
   val name : string
   (** A name for such kind of manipulation, e.g. [interp]. *)
+
+  val default : ('raw, 'glb, 'top) genarg_type -> ('raw, 'glb, 'top) obj option
+  (** A generic object when there is no registered object for this type. *)
 end
 
 module Register (M : GenObj) :

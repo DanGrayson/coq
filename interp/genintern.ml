@@ -15,7 +15,6 @@ open Genarg
 type glob_sign = {
   ltacvars : Id.Set.t;
   ltacrecvars : Nametab.ltac_constant Id.Map.t;
-  gsigma : Evd.evar_map;
   genv : Environ.env }
 
 type ('raw, 'glb) intern_fun = glob_sign -> 'raw -> glob_sign * 'glb
@@ -25,12 +24,14 @@ module InternObj =
 struct
   type ('raw, 'glb, 'top) obj = ('raw, 'glb) intern_fun
   let name = "intern"
+  let default _ = None
 end
 
 module SubstObj =
 struct
   type ('raw, 'glb, 'top) obj = 'glb subst_fun
   let name = "subst"
+  let default _ = None
 end
 
 module Intern = Register (InternObj)

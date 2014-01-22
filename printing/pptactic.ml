@@ -141,12 +141,11 @@ let pr_fresh_ids = prlist (fun s -> spc() ++ pr_or_var qs s)
 
 let with_evars ev s = if ev then "e" ^ s else s
 
-let if_pattern_ident b pr c = (if b then str "?" else mt()) ++ pr c
 
 let rec pr_raw_generic prc prlc prtac prpat prref (x:Genarg.rlevel Genarg.generic_argument) =
   match Genarg.genarg_tag x with
   | IntOrVarArgType -> pr_or_var int (out_gen (rawwit wit_int_or_var) x)
-  | IdentArgType b -> if_pattern_ident b pr_id (out_gen (rawwit wit_ident) x)
+  | IdentArgType -> pr_id (out_gen (rawwit wit_ident) x)
   | VarArgType -> pr_located pr_id (out_gen (rawwit wit_var) x)
   | GenArgType -> pr_raw_generic prc prlc prtac prpat prref (out_gen (rawwit wit_genarg) x)
   | ConstrArgType -> prc (out_gen (rawwit wit_constr) x)
@@ -180,7 +179,7 @@ let rec pr_raw_generic prc prlc prtac prpat prref (x:Genarg.rlevel Genarg.generi
 let rec pr_glb_generic prc prlc prtac prpat x =
   match Genarg.genarg_tag x with
   | IntOrVarArgType -> pr_or_var int (out_gen (glbwit wit_int_or_var) x)
-  | IdentArgType b -> if_pattern_ident b pr_id (out_gen (glbwit wit_ident) x)
+  | IdentArgType -> pr_id (out_gen (glbwit wit_ident) x)
   | VarArgType -> pr_located pr_id (out_gen (glbwit wit_var) x)
   | GenArgType -> pr_glb_generic prc prlc prtac prpat (out_gen (glbwit wit_genarg) x)
   | ConstrArgType -> prc (out_gen (glbwit wit_constr) x)
@@ -215,7 +214,7 @@ let rec pr_glb_generic prc prlc prtac prpat x =
 let rec pr_top_generic prc prlc prtac prpat x =
   match Genarg.genarg_tag x with
   | IntOrVarArgType -> pr_or_var int (out_gen (topwit wit_int_or_var) x)
-  | IdentArgType b -> if_pattern_ident b pr_id (out_gen (topwit wit_ident) x)
+  | IdentArgType -> pr_id (out_gen (topwit wit_ident) x)
   | VarArgType -> pr_id (out_gen (topwit wit_var) x)
   | GenArgType -> pr_top_generic prc prlc prtac prpat (out_gen (topwit wit_genarg) x)
   | ConstrArgType -> prc (out_gen (topwit wit_constr) x)
@@ -1029,12 +1028,20 @@ let register_uniform_printer wit pr =
   Genprint.register_print0 wit pr pr pr
 
 let () =
+  let pr_bool b = if b then str "true" else str "false" in
+  let pr_unit _ = str "()" in
+  let pr_string s = str "\"" ++ str s ++ str "\"" in
   Genprint.register_print0 Constrarg.wit_ref
     pr_reference (pr_or_var (pr_located pr_global)) pr_global;
   Genprint.register_print0 Constrarg.wit_intro_pattern
     pr_intro_pattern pr_intro_pattern pr_intro_pattern;
   Genprint.register_print0 Constrarg.wit_sort
-    pr_glob_sort pr_glob_sort pr_sort
+    pr_glob_sort pr_glob_sort pr_sort;
+  Genprint.register_print0 Stdarg.wit_int int int int;
+  Genprint.register_print0 Stdarg.wit_bool pr_bool pr_bool pr_bool;
+  Genprint.register_print0 Stdarg.wit_unit pr_unit pr_unit pr_unit;
+  Genprint.register_print0 Stdarg.wit_pre_ident str str str;
+  Genprint.register_print0 Stdarg.wit_string pr_string pr_string pr_string
 
 let () =
   let printer _ _ prtac = prtac (0, E) in

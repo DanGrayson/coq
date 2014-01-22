@@ -232,27 +232,20 @@ module Refinable = struct
        many things to go wrong. *)
     handle := fusion delta_list !handle
 
-  (* [constr_of_raw] is a pretyping function. The [check_type] argument
-      asks whether the term should have the same type as the conclusion.
-      [resolve_classes] is a flag on pretyping functions which, if set to true,
-      calls the typeclass resolver.
+  (* [constr_of_raw h tycon flags] is a pretyping function.
+      The [tycon] argument allows to put a type constraint on the returned term.
+      The [flags] argument is passed to the pretyper.
       The principal argument is a [glob_constr] which is then pretyped in the
       context of a term, the remaining evars are registered to the handle.
       It is the main component of the toplevel refine tactic.*)
   (* spiwack: it is not entirely satisfactory to have this function here. Plus it is
       a bit hackish. However it does not seem possible to move it out until
       pretyping is defined as some proof procedure. *)
-  let constr_of_raw handle check_type resolve_classes lvar rawc = (); fun env rdefs gl info ->
+  let constr_of_raw handle tycon flags lvar rawc = (); fun env rdefs gl info ->
     (* We need to keep trace of what [rdefs] was originally*)
     let init_defs = !rdefs in
-    (* if [check_type] is true, then creates a type constraint for the
-       proof-to-be *)
-    let tycon = if check_type then Pretyping.OfType (Evd.evar_concl info) else Pretyping.WithoutTypeConstraint in
     (* call to [understand_tcc_evars] returns a constr with undefined evars
        these evars will be our new goals *)
-    let flags =
-      if resolve_classes then Pretyping.all_no_fail_flags
-      else Pretyping.no_classes_no_fail_inference_flags in
     let (sigma, open_constr) =
       Pretyping.understand_ltac flags !rdefs env lvar tycon rawc
     in
@@ -542,8 +535,8 @@ module V82 = struct
     in
     let evi = Typeclasses.mark_unresolvable evi in
     let (evars, evk) = Evarutil.new_pure_evar_full evars evi in
-    let ids = List.map Util.pi1 (Environ.named_context_of_val hyps) in
-    let inst = Array.of_list (List.map mkVar ids) in
+    let ctxt = Environ.named_context_of_val hyps in
+    let inst = Array.map_of_list (fun (id, _, _) -> mkVar id) ctxt in
     let ev = Term.mkEvar (evk,inst) in
     (build evk, ev, evars)
 

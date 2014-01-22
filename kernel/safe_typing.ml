@@ -282,7 +282,6 @@ let safe_push_named (id,_,_ as d) env =
 
 let push_named_def (id,de) senv =
   let (c,typ,cst) = Term_typing.translate_local_def senv.env id de in
-  (* XXX for now we force *)
   let c = match c with
     | Def c -> Lazyconstr.force c
     | OpaqueDef c -> Lazyconstr.force_opaque (Future.join c)
@@ -379,7 +378,7 @@ let add_constant dir l decl senv =
       (* In coqc, opaque constants outside sections will be stored
          indirectly in a specific table *)
       { cb with const_body =
-           OpaqueDef (Future.chain ~pure:true lc Lazyconstr.turn_indirect) }
+           OpaqueDef (Future.chain ~greedy:true ~pure:true lc Lazyconstr.turn_indirect) }
     | _ -> cb
   in
   let senv' = add_field (l,SFBconst cb) (C kn) senv in
@@ -658,9 +657,11 @@ let start_library dir senv =
     modvariant = LIBRARY;
     imports = senv.imports }
 
-let export senv dir =
+let export compilation_mode senv dir =
   let senv =
-    try join_safe_environment senv
+    try
+      if compilation_mode = Flags.BuildVi then senv (* FIXME: cleanup future*)
+      else join_safe_environment senv
     with e -> Errors.errorlabstrm "future" (Errors.print e)
   in
   let () = check_current_library dir senv in
@@ -679,9 +680,7 @@ let export senv dir =
   let ast, values =
     if !Flags.no_native_compiler then [], [||]
     else
-      let ast, values, upds = Nativelibrary.dump_library mp dir senv.env str in
-      Nativecode.update_locations upds;
-      ast, values
+      Nativelibrary.dump_library mp dir senv.env str
   in
   let lib = {
     comp_name = dir;
@@ -700,7 +699,11 @@ let import lib digest senv =
   let env = Environ.add_constraints mb.mod_constraints senv.env in
   (mp, lib.comp_natsymbs),
   { senv with
-    env = Modops.add_module mb env;
+    env =
+      (let linkinfo =
+	 Nativecode.link_info_of_dirpath lib.comp_name
+       in
+       Modops.add_linked_module mb linkinfo env);
     modresolver = Mod_subst.add_delta_resolver mb.mod_delta senv.modresolver;
     imports = (lib.comp_name,digest)::senv.imports;
     loads = (mp,mb)::senv.loads }

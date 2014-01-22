@@ -58,7 +58,7 @@ let handle_side_effects env body side_eff =
       Name (id_of_string name) in
     let rec sub c i x = match kind_of_term x with
       | Const c' when eq_constant c c' -> mkRel i
-      | _ -> map_constr_with_binders ((+) 1) (sub c) i x in
+      | _ -> map_constr_with_binders ((+) 1) (fun i x -> sub c i x) i x in
     let fix_body (c,cb) t =
       match cb.const_body with
       | Undef _ -> assert false
@@ -78,45 +78,46 @@ let handle_side_effects env body side_eff =
   Declareops.fold_side_effects handle_sideff body
     (Declareops.uniquize_side_effects side_eff)
 
+let hcons_j j =
+  { uj_val = hcons_constr j.uj_val; uj_type = hcons_constr j.uj_type} 
+
+let feedback_completion_typecheck =
+  Option.iter (fun state_id -> Pp.feedback ~state_id Interface.Complete)
+  
 (* what is used for debugging only *)
 let infer_declaration ?(what="UNKNOWN") env dcl =
   match dcl with
-  | DefinitionEntry c ->
-      let ctx, entry_body = c.const_entry_secctx, c.const_entry_body in
-      if c.const_entry_opaque && not (Option.is_empty c.const_entry_type) then
-        let body_cst =
-          Future.chain ~pure:true entry_body (fun (body, side_eff) ->
-            let body = handle_side_effects env body side_eff in
-            let j, cst = infer env body in
-            let j =
-              {uj_val = hcons_constr j.uj_val;
-               uj_type = hcons_constr j.uj_type} in
-            let _typ, cst = constrain_type env j cst c.const_entry_type in
-            Lazyconstr.opaque_from_val j.uj_val, cst) in
-        let body, cst = Future.split2 body_cst in
-        let def = OpaqueDef body in
-        let typ = match c.const_entry_type with
-        | None -> assert false
-        | Some typ -> NonPolymorphicType typ in
-        def, typ, cst, c.const_entry_inline_code, ctx
-      else
-        let body, side_eff = Future.join entry_body in
-        let body = handle_side_effects env body side_eff in
-        let j, cst =
-          try infer env body 
-          with Not_found as e -> 
-            prerr_endline ("infer not found " ^ what);
-            raise e in
-        let j =
-          {uj_val = hcons_constr j.uj_val;
-           uj_type = hcons_constr j.uj_type} in
-        let typ, cst = constrain_type env j cst c.const_entry_type in
-        let def = Def (Lazyconstr.from_val j.uj_val) in
-        def, typ, Future.from_val cst, c.const_entry_inline_code, ctx
   | ParameterEntry (ctx,t,nl) ->
       let j, cst = infer env t in
       let t = hcons_constr (Typeops.assumption_of_judgment env j) in
       Undef nl, NonPolymorphicType t, Future.from_val cst, false, ctx
+  | DefinitionEntry ({ const_entry_type = Some typ;
+                       const_entry_opaque = true } as c) ->
+      let { const_entry_body = body; const_entry_feedback = feedback_id } = c in
+      let body_cst =
+        Future.chain ~greedy:true ~pure:true body (fun (body, side_eff) ->
+          let body = handle_side_effects env body side_eff in
+          let j, cst = infer env body in
+          let j = hcons_j j in
+          let _typ, cst = constrain_type env j cst (Some typ) in
+          feedback_completion_typecheck feedback_id;
+          Lazyconstr.opaque_from_val j.uj_val, cst) in
+      let body, cst = Future.split2 ~greedy:true body_cst in
+      let def = OpaqueDef body in
+      let typ = NonPolymorphicType typ in
+      def, typ, cst, c.const_entry_inline_code, c.const_entry_secctx
+  | DefinitionEntry c ->
+      let { const_entry_type = typ; const_entry_opaque = opaque } = c in
+      let { const_entry_body = body; const_entry_feedback = feedback_id } = c in
+      let body, side_eff = Future.join body in
+      let body = handle_side_effects env body side_eff in
+      let j, cst = infer env body in
+      let j = hcons_j j in
+      let typ, cst = constrain_type env j cst typ in
+      feedback_completion_typecheck feedback_id;
+      let def = Def (Lazyconstr.from_val j.uj_val) in
+      let cst = Future.from_val cst in
+      def, typ, cst, c.const_entry_inline_code, c.const_entry_secctx
 
 let global_vars_set_constant_type env = function
   | NonPolymorphicType t -> global_vars_set env t
@@ -125,6 +126,17 @@ let global_vars_set_constant_type env = function
         (fold_rel_declaration
 	  (fun t c -> Id.Set.union (global_vars_set env t) c))
       ctx ~init:Id.Set.empty
+
+
+let record_aux env s1 s2 =
+  let v =
+    String.concat " "
+      (List.map (fun (id, _,_) -> Id.to_string id)
+        (keep_hyps env (Id.Set.union s1 s2))) in
+  Aux_file.record_in_aux "context_used" v
+
+let suggest_proof_using = ref (fun _ _ _ _ _ -> ())
+let set_suggest_proof_using f = suggest_proof_using := f
 
 let build_constant_declaration kn env (def,typ,cst,inline_code,ctx) =
   let check declared inferred =
@@ -135,9 +147,10 @@ let build_constant_declaration kn env (def,typ,cst,inline_code,ctx) =
         (String.concat ", " (List.map Id.to_string
           (Id.Set.elements (Idset.diff inferred_set declared_set))))) in
   (* We try to postpone the computation of used section variables *)
-  let hyps, def = 
+  let hyps, def =
+    let context_ids = List.map pi1 (named_context env) in
     match ctx with
-    | None when not (List.is_empty (named_context env)) -> 
+    | None when not (List.is_empty context_ids) -> 
         (* No declared section vars, and non-empty section context:
            we must look at the body NOW, if any *)
         let ids_typ = global_vars_set_constant_type env typ in
@@ -147,9 +160,18 @@ let build_constant_declaration kn env (def,typ,cst,inline_code,ctx) =
         | OpaqueDef lc -> 
             (* we force so that cst are added to the env immediately after *)
             ignore(Future.join cst);
-            global_vars_set env (Lazyconstr.force_opaque (Future.join lc)) in
+            let vars =
+              global_vars_set env (Lazyconstr.force_opaque (Future.join lc)) in
+            !suggest_proof_using kn env vars ids_typ context_ids;
+            if !Flags.compilation_mode = Flags.BuildVo then
+              record_aux env ids_typ vars;
+            vars
+            in
         keep_hyps env (Idset.union ids_typ ids_def), def
-    | None -> [], def (* Empty section context: no need to check *)
+    | None ->
+        if !Flags.compilation_mode = Flags.BuildVo then
+          record_aux env Id.Set.empty Id.Set.empty;
+        [], def (* Empty section context: no need to check *)
     | Some declared ->
         (* We use the declared set and chain a check of correctness *)
         declared,
@@ -162,7 +184,7 @@ let build_constant_declaration kn env (def,typ,cst,inline_code,ctx) =
             check declared inferred;
             x
         | OpaqueDef lc -> (* In this case we can postpone the check *)
-            OpaqueDef (Future.chain ~pure:true lc (fun lc ->
+            OpaqueDef (Future.chain ~greedy:true ~pure:true lc (fun lc ->
               let ids_typ = global_vars_set_constant_type env typ in
               let ids_def =
                 global_vars_set env (Lazyconstr.force_opaque lc) in
@@ -173,7 +195,6 @@ let build_constant_declaration kn env (def,typ,cst,inline_code,ctx) =
     const_type = typ;
     const_body_code = Cemitcodes.from_val (compile_constant_body env def);
     const_constraints = cst;
-    const_native_name = ref NotLinked;
     const_inline_code = inline_code }
 
 (*s Global and local constant declaration. *)
@@ -197,7 +218,7 @@ let translate_local_def env id centry =
 let translate_mind env kn mie = Indtypes.check_inductive env kn mie
 
 let handle_side_effects env ce = { ce with
-  const_entry_body = Future.chain ~pure:true
+  const_entry_body = Future.chain ~greedy:true ~pure:true
     ce.const_entry_body (fun (body, side_eff) ->
        handle_side_effects env body side_eff, Declareops.no_seff);
 }

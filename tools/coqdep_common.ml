@@ -22,7 +22,6 @@ let stdout = Pervasives.stdout
 
 let option_c = ref false
 let option_noglob = ref false
-let option_slash = ref false
 let option_natdynlk = ref true
 let option_mldep = ref None
 
@@ -33,9 +32,19 @@ let suffixe = ref ".vo"
 
 type dir = string option
 
-(* filename for printing *)
-let (//) s1 s2 =
-  if !option_slash then s1^"/"^s2 else Filename.concat s1 s2
+(* Filename.concat but always with a '/' *)
+let is_dir_sep s i =
+  match Sys.os_type with
+  | "Unix" -> s.[i] = '/'
+  | "Cygwin" | "Win32" ->
+    let c = s.[i] in c = '/' || c = '\\' || c = ':'
+  | _ -> assert false
+
+let (//) dirname filename =
+  let l = String.length dirname in
+  if l = 0 || is_dir_sep dirname (l-1)
+  then dirname ^ filename
+  else dirname ^ "/" ^ filename
 
 (** [get_extension f l] checks whether [f] has one of the extensions
     listed in [l]. It returns [f] without its extension, alongside with
@@ -91,8 +100,6 @@ let safe_hash_add clq q (k,v) =
 
 (** Files found in the loadpaths.
     For the ML files, the string is the basename without extension.
-    To allow ML source filename to be potentially capitalized,
-    we perform a double search.
 *)
 
 let mkknown () =
@@ -100,10 +107,8 @@ let mkknown () =
   let add x s = if Hashtbl.mem h x then () else Hashtbl.add h x s
   and iter f = Hashtbl.iter f h
   and search x =
-    try Some (Hashtbl.find h (String.uncapitalize x))
-    with Not_found ->
-      try Some (Hashtbl.find h (String.capitalize x))
-      with Not_found -> None
+    try Some (Hashtbl.find h x)
+    with Not_found -> None
   in add, iter, search
 
 let add_ml_known, iter_ml_known, search_ml_known = mkknown ()
@@ -289,7 +294,7 @@ let canonize f =
     | (f,_) :: _ -> escape f
     | _ -> escape f
 
-let rec traite_fichier_Coq verbose f =
+let rec traite_fichier_Coq suffixe verbose f =
   try
     let chan = open_in f in
     let buf = Lexing.from_channel chan in
@@ -305,7 +310,7 @@ let rec traite_fichier_Coq verbose f =
 	          addQueue deja_vu_v str;
                   try
                     let file_str = safe_assoc verbose f str in
-                    printf " %s%s" (canonize file_str) !suffixe
+                    printf " %s%s" (canonize file_str) suffixe
                   with Not_found ->
 		    if verbose && not (Hashtbl.mem coqlibKnown str) then
                       warning_module_notfound f str
@@ -316,7 +321,7 @@ let rec traite_fichier_Coq verbose f =
 	        addQueue deja_vu_v [str];
                 try
                   let file_str = Hashtbl.find vKnown [str] in
-                  printf " %s%s" (canonize file_str) !suffixe
+                  printf " %s%s" (canonize file_str) suffixe
                 with Not_found ->
 		  if not (Hashtbl.mem coqlibKnown [str]) then
 		    warning_notfound f s
@@ -350,7 +355,7 @@ let rec traite_fichier_Coq verbose f =
                   let file_str = Hashtbl.find vKnown [str] in
                   let canon = canonize file_str in
                   printf " %s.v" canon;
-                  traite_fichier_Coq true (canon ^ ".v")
+                  traite_fichier_Coq suffixe true (canon ^ ".v")
                 with Not_found -> ()
        	      end
           | AddLoadPath _ | AddRecLoadPath _ -> (* TODO *) ()
@@ -408,7 +413,10 @@ let coq_dependencies () =
        let ename = escape name in
        let glob = if !option_noglob then "" else " "^ename^".glob" in
        printf "%s%s%s %s.v.beautified: %s.v" ename !suffixe glob ename ename;
-       traite_fichier_Coq true (name ^ ".v");
+       traite_fichier_Coq !suffixe true (name ^ ".v");
+       printf "\n";
+       printf "%s.vi: %s.v" ename ename;
+       traite_fichier_Coq ".vi" true (name ^ ".v");
        printf "\n";
        flush stdout)
     (List.rev !vAccu)

@@ -103,12 +103,12 @@ HIDE := $(if $(VERBOSE),,@)
 LOCALINCLUDES=$(addprefix -I , $(SRCDIRS) )
 MLINCLUDES=$(LOCALINCLUDES) -I $(MYCAMLP4LIB)
 
-OCAMLC := $(TYPEREX) $(OCAMLC) $(CAMLFLAGS)
-OCAMLOPT := $(TYPEREX) $(OCAMLOPT) $(CAMLFLAGS)
+OCAMLC := $(OCAMLC) $(CAMLFLAGS)
+OCAMLOPT := $(OCAMLOPT) $(CAMLFLAGS)
 
 BYTEFLAGS=$(CAMLDEBUG) $(USERFLAGS)
 OPTFLAGS=$(CAMLDEBUGOPT) $(CAMLTIMEPROF) $(USERFLAGS)
-DEPFLAGS= -slash $(LOCALINCLUDES)
+DEPFLAGS= $(LOCALINCLUDES)
 
 define bestocaml
 $(if $(OPT),\
@@ -372,7 +372,7 @@ install-ide-info:
 
 md5chk:
 	$(SHOW)'MD5SUM cic.mli'
-	$(HIDE)if grep -q `md5sum checker/cic.mli` checker/values.ml; \
+	$(HIDE)if grep -q `$(MD5SUM) checker/cic.mli` checker/values.ml; \
 	       then true; else echo "Error: outdated checker/values.ml"; false; fi
 
 VALIDOPTS=$(if $(VERBOSE),,-silent) -o -m
@@ -667,7 +667,7 @@ install-coq-manpages:
 
 install-emacs:
 	$(MKDIR) $(FULLEMACSLIB)
-	$(INSTALLLIB) tools/coq-db.el tools/coq-font-lock.el tools/coq-syntax.el tools/coq.el tools/coq-inferior.el $(FULLEMACSLIB)
+	$(INSTALLLIB) tools/gallina-db.el tools/coq-font-lock.el tools/gallina-syntax.el tools/gallina.el tools/coq-inferior.el $(FULLEMACSLIB)
 
 # command to update TeX' kpathsea database
 #UPDATETEX = $(MKTEXLSR) /usr/share/texmf /var/spool/texmf $(BASETEXDIR) > /dev/null
@@ -744,7 +744,8 @@ dev/printers.cma: | dev/printers.mllib.d
 grammar/grammar.cma: | grammar/grammar.mllib.d
 	$(SHOW)'Testing $@'
 	@touch test.ml4
-	$(HIDE)$(OCAMLC) $(MLINCLUDES) $(BYTEFLAGS) -pp '$(CAMLP4O) -I $(CAMLLIB) $^ -impl' -impl test.ml4 -o test-grammar
+	$(HIDE)$(CAMLP4O) -I $(CAMLLIB) $^ -impl test.ml4 -o test.ml
+	$(HIDE)$(OCAMLC) $(MLINCLUDES) $(BYTEFLAGS) test.ml -o test-grammar
 	@rm -f test-grammar test.*
 	$(SHOW)'OCAMLC -a $@'   
 	$(HIDE)$(OCAMLC) $(MLINCLUDES) $(BYTEFLAGS) $^ -linkall -a -o $@
@@ -923,11 +924,11 @@ OCAMLDEP_NG = $(COQDEPBOOT) -mldep $(OCAMLDEP)
 
 checker/%.ml.d: $(D_DEPEND_BEFORE_SRC) checker/%.ml $(D_DEPEND_AFTER_SRC) $(COQDEPBOOT) $(GENFILES)
 	$(SHOW)'OCAMLDEP  $<'
-	$(HIDE)$(OCAMLDEP_NG) -slash $(LOCALCHKLIBS) "$<" $(TOTARGET)
+	$(HIDE)$(OCAMLDEP_NG) $(LOCALCHKLIBS) "$<" $(TOTARGET)
 
 checker/%.mli.d: $(D_DEPEND_BEFORE_SRC) checker/%.mli $(D_DEPEND_AFTER_SRC) $(COQDEPBOOT) $(GENFILES)
 	$(SHOW)'OCAMLDEP  $<'
-	$(HIDE)$(OCAMLDEP_NG) -slash $(LOCALCHKLIBS) "$<" $(TOTARGET)
+	$(HIDE)$(OCAMLDEP_NG) $(LOCALCHKLIBS) "$<" $(TOTARGET)
 
 %.ml.d: $(D_DEPEND_BEFORE_SRC) %.ml $(D_DEPEND_AFTER_SRC) $(COQDEPBOOT) $(GENFILES)
 	$(SHOW)'OCAMLDEP  $<'
@@ -939,15 +940,15 @@ checker/%.mli.d: $(D_DEPEND_BEFORE_SRC) checker/%.mli $(D_DEPEND_AFTER_SRC) $(CO
 
 checker/%.mllib.d: $(D_DEPEND_BEFORE_SRC) checker/%.mllib $(D_DEPEND_AFTER_SRC) $(COQDEPBOOT) $(GENFILES)
 	$(SHOW)'COQDEP  $<'
-	$(HIDE)$(COQDEPBOOT) -slash -I checker -c "$<" $(TOTARGET)
+	$(HIDE)$(COQDEPBOOT) -I checker -c "$<" $(TOTARGET)
 
 %.mllib.d: $(D_DEPEND_BEFORE_SRC) %.mllib $(D_DEPEND_AFTER_SRC) $(COQDEPBOOT) $(GENFILES)
 	$(SHOW)'COQDEP  $<'
-	$(HIDE)$(COQDEPBOOT) -slash -I kernel -I tools/coqdoc -c "$<" $(TOTARGET)
+	$(HIDE)$(COQDEPBOOT) -I kernel -I tools/coqdoc -c "$<" $(TOTARGET)
 
 %.v.d: $(D_DEPEND_BEFORE_SRC) %.v $(D_DEPEND_AFTER_SRC) $(COQDEPBOOT) $(GENVFILES)
 	$(SHOW)'COQDEP    $<'
-	$(HIDE)$(COQDEPBOOT) $(DEPNATDYN) -slash "$<" $(TOTARGET)
+	$(HIDE)$(COQDEPBOOT) $(DEPNATDYN) "$<" $(TOTARGET)
 
 %_stubs.c.d: $(D_DEPEND_BEFORE_SRC) %_stubs.c $(D_DEPEND_AFTER_SRC)
 	$(SHOW)'CCDEP	$<'

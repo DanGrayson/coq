@@ -157,13 +157,18 @@ let fold_named_context_reverse f ~init env =
 
 let lookup_constant = lookup_constant
 
-let add_constant kn cs env =
+let no_link_info () = ref NotLinked
+
+let add_constant_key kn cb linkinfo env =
   let new_constants =
-    Cmap_env.add kn (cs,ref None) env.env_globals.env_constants in
+    Cmap_env.add kn (cb,(linkinfo, ref None)) env.env_globals.env_constants in
   let new_globals =
     { env.env_globals with
 	env_constants = new_constants } in
   { env with env_globals = new_globals }
+
+let add_constant kn cb env =
+  add_constant_key kn cb (no_link_info ()) env
 
 (* constant_type gives the type of a constant *)
 let constant_type env kn =
@@ -192,13 +197,16 @@ let evaluable_constant cst env =
 
 (* Mutual Inductives *)
 let lookup_mind = lookup_mind
-  
-let add_mind kn mib env =
-  let new_inds = Mindmap_env.add kn mib env.env_globals.env_inductives in
+
+let add_mind_key kn mind_key env =
+  let new_inds = Mindmap_env.add kn mind_key env.env_globals.env_inductives in
   let new_globals =
     { env.env_globals with
 	env_inductives = new_inds } in
   { env with env_globals = new_globals }
+
+let add_mind kn mib env =
+  let li = no_link_info () in add_mind_key kn (mib, li) env
 
 (* Universe constraints *)
 
@@ -253,21 +261,23 @@ let global_vars_set env constr =
    contains the variables of the set [ids], and recursively the variables
    contained in the types of the needed variables. *)
 
+let really_needed env needed =
+  Context.fold_named_context_reverse
+    (fun need (id,copt,t) ->
+      if Id.Set.mem id need then
+        let globc =
+          match copt with
+            | None -> Id.Set.empty
+            | Some c -> global_vars_set env c in
+        Id.Set.union
+          (global_vars_set env t)
+          (Id.Set.union globc need)
+      else need)
+    ~init:needed
+    (named_context env)
+
 let keep_hyps env needed =
-  let really_needed =
-    Context.fold_named_context_reverse
-      (fun need (id,copt,t) ->
-        if Id.Set.mem id need then
-          let globc =
-	    match copt with
-	      | None -> Id.Set.empty
-	      | Some c -> global_vars_set env c in
-	  Id.Set.union
-            (global_vars_set env t)
-	    (Id.Set.union globc need)
-        else need)
-      ~init:needed
-      (named_context env) in
+  let really_needed = really_needed env needed in
   Context.fold_named_context
     (fun (id,_,_ as d) nsign ->
       if Id.Set.mem id really_needed then add_named_decl d nsign

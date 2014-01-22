@@ -14,14 +14,20 @@ open Declarations
 
 (** The type of environments. *)
 
+type link_info =
+  | Linked of string
+  | LinkedInteractive of string
+  | NotLinked
 
-type key = int option ref
+type key = int Ephemeron.key option ref 
 
-type constant_key = constant_body * key
+type constant_key = constant_body * (link_info ref * key)
+
+type mind_key = mutual_inductive_body * link_info ref
 
 type globals = {
   env_constants : constant_key Cmap_env.t;
-  env_inductives : mutual_inductive_body Mindmap_env.t;
+  env_inductives : mind_key Mindmap_env.t;
   env_modules : module_body MPmap.t;
   env_modtypes : module_type_body MPmap.t}
 
@@ -31,7 +37,7 @@ type stratification = {
 }
 
 type val_kind =
-    | VKvalue of values * Id.Set.t
+    | VKvalue of (values * Id.Set.t) Ephemeron.key
     | VKnone
 
 type lazy_val = val_kind ref
@@ -77,5 +83,5 @@ val lookup_constant_key : constant -> env -> constant_key
 val lookup_constant : constant -> env -> constant_body
 
 (** Mutual Inductives *)
+val lookup_mind_key : mutual_inductive -> env -> mind_key
 val lookup_mind : mutual_inductive -> env -> mutual_inductive_body
-

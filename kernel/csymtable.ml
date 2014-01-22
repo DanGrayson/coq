@@ -68,8 +68,10 @@ exception NotEvaluated
 
 let key rk =
   match !rk with
-  | Some k -> (*Pp.msgnl (str"found at: "++int k);*)  k
-  | _ -> raise NotEvaluated
+  | None -> raise NotEvaluated
+  | Some k -> (*Pp.msgnl (str"found at: "++int k);*)
+      try Ephemeron.get k
+      with Ephemeron.InvalidKey -> raise NotEvaluated
 
 (************************)
 (* traduction des patch *)
@@ -92,7 +94,7 @@ let slot_for_annot key =
     n
 
 let rec slot_for_getglobal env kn =
-  let (cb,rk) = lookup_constant_key kn env in
+  let (cb,(_,rk)) = lookup_constant_key kn env in
   try key rk
   with NotEvaluated ->
 (*    Pp.msgnl(str"not yet evaluated");*)
@@ -104,40 +106,43 @@ let rec slot_for_getglobal env kn =
     | BCallias kn' -> slot_for_getglobal env kn'
     | BCconstant -> set_global (val_of_constant kn) in
 (*Pp.msgnl(str"value stored at: "++int pos);*)
-    rk := Some pos;
+    rk := Some (Ephemeron.create pos);
     pos
 
 and slot_for_fv env fv =
+  let fill_fv_cache cache id v_of_id env_of_id b =
+    let v,d =
+      match b with
+      | None -> v_of_id id, Id.Set.empty
+      | Some c ->
+          val_of_constr (env_of_id id env) c,
+          Environ.global_vars_set (Environ.env_of_pre_env env) c in
+    cache := VKvalue (Ephemeron.create (v,d)); v in
+  let val_of_rel i = val_of_rel (nb_rel env - i) in
+  let idfun _ x = x in
   match fv with
   | FVnamed id ->
       let nv = Pre_env.lookup_named_val id env in
-      begin
-	match !nv with
-	| VKvalue (v,_) -> v
-	| VKnone ->
-	    let (_, b, _) = Context.lookup_named id env.env_named_context in
-	    let v,d =
-	      match b with
-		| None -> (val_of_named id, Id.Set.empty)
-		| Some c -> (val_of_constr env c, Environ.global_vars_set (Environ.env_of_pre_env env) c)
-	    in
-	      nv := VKvalue (v,d); v
-      end
+      begin match !nv with
+      | VKnone ->
+          let _, b, _ = Context.lookup_named id env.env_named_context in
+          fill_fv_cache nv id val_of_named idfun b
+      | VKvalue key ->
+          try fst (Ephemeron.get key)
+          with Ephemeron.InvalidKey ->
+            let _, b, _ = Context.lookup_named id env.env_named_context in
+            fill_fv_cache nv id val_of_named idfun b end
   | FVrel i ->
       let rv = Pre_env.lookup_rel_val i env in
-      begin
-	match !rv with
-	| VKvalue (v, _) -> v
-	| VKnone ->
-	    let (_, b, _) = lookup_rel i env.env_rel_context in
-	    let (v, d) =
-	      match b with
-		| None -> (val_of_rel (nb_rel env - i), Id.Set.empty)
-		| Some c -> let renv =  env_of_rel i env in
-			      (val_of_constr renv c, Environ.global_vars_set (Environ.env_of_pre_env renv) c)
-	    in
-	      rv := VKvalue (v,d); v
-      end
+      begin match !rv with
+      | VKnone ->
+          let _, b, _ = lookup_rel i env.env_rel_context in
+          fill_fv_cache rv i val_of_rel env_of_rel b
+      | VKvalue key ->
+          try fst (Ephemeron.get key)
+          with Ephemeron.InvalidKey ->
+            let _, b, _ = lookup_rel i env.env_rel_context in
+            fill_fv_cache rv i val_of_rel env_of_rel b end
 
 and eval_to_patch env (buff,pl,fv) =
   (* copy code *before* patching because of nested evaluations:

@@ -244,6 +244,12 @@ let in_whnf (t,stk) =
 
 let steps = ref 0
 
+let slave_process =
+  let rec f = ref (fun () ->
+    match !Flags.async_proofs_mode with
+    | Flags.APonParallel n -> let b = n > 0 in f := (fun () -> b); !f ()
+    | _ -> f := (fun () -> false); !f ()) in
+  fun () -> !f ()
 
 (* Conversion between  [lft1]term1 and [lft2]term2 *)
 let rec ccnv cv_pb l2r infos lft1 lft2 term1 term2 cuniv =
@@ -253,7 +259,7 @@ let rec ccnv cv_pb l2r infos lft1 lft2 term1 term2 cuniv =
 and eqappr cv_pb l2r infos (lft1,st1) (lft2,st2) cuniv =
   Util.check_for_interrupt ();
   incr steps;
-  if !steps = 10000 && !Flags.coq_slave_mode > 0 then begin
+  if !steps = 10000 && slave_process () then begin
     Thread.yield ();
     steps := 0;
   end;
@@ -472,15 +478,16 @@ let conv_leq_vecti ?(l2r=false) ?(evars=fun _->None) env v1 v2 =
     v2
 
 (* option for conversion *)
-let nat_conv = ref (fun cv_pb -> fconv cv_pb false (fun _->None))
+let nat_conv = ref (fun cv_pb sigma ->
+		    fconv cv_pb false (sigma.Nativelambda.evars_val))
 let set_nat_conv f = nat_conv := f
 
-let native_conv cv_pb env t1 t2 =
+let native_conv cv_pb sigma env t1 t2 =
   if eq_constr t1 t2 then empty_constraint
   else begin
     let t1 = (it_mkLambda_or_LetIn t1 (rel_context env)) in
     let t2 = (it_mkLambda_or_LetIn t2 (rel_context env)) in
-    !nat_conv cv_pb env t1 t2 
+    !nat_conv cv_pb sigma env t1 t2 
   end
 
 let vm_conv = ref (fun cv_pb -> fconv cv_pb false (fun _->None))
@@ -561,6 +568,21 @@ let dest_prod_assum env =
     | _               -> l,rty
   in
   prodec_rec env empty_rel_context
+
+let dest_lam_assum env =
+  let rec lamec_rec env l ty =
+    let rty = whd_betadeltaiota_nolet env ty in
+    match kind_of_term rty with
+    | Lambda (x,t,c)  ->
+        let d = (x,None,t) in
+	lamec_rec (push_rel d env) (add_rel_decl d l) c
+    | LetIn (x,b,t,c) ->
+        let d = (x,Some b,t) in
+	lamec_rec (push_rel d env) (add_rel_decl d l) c
+    | Cast (c,_,_)    -> lamec_rec env l c
+    | _               -> l,rty
+  in
+  lamec_rec env empty_rel_context
 
 exception NotArity
 

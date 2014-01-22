@@ -40,6 +40,12 @@ val finish : unit -> unit
 
 (* Joins the entire document.  Implies finish, but also checks proofs *)
 val join : unit -> unit
+(* To save to disk an incomplete document *)
+type tasks
+val dump : unit -> tasks
+
+val check_task : string -> tasks -> int -> unit
+val info_tasks : tasks -> (string * float * int) list
 
 (* Id of the tip of the current branch *)
 val get_current_state : unit -> Stateid.t
@@ -48,6 +54,8 @@ val get_current_state : unit -> Stateid.t
 val init : unit -> unit
 val slave_main_loop : unit -> unit
 val slave_init_stdout : unit -> unit
+
+val set_compilation_hints : Aux_file.aux_file -> unit
 
 (** read-eval-print loop compatible interface ****************************** **)
 

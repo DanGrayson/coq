@@ -297,7 +297,7 @@ let clean sds sps =
     print "\trm -f $(addsuffix .d,$(MLFILES) $(MLIFILES) $(ML4FILES) $(MLLIBFILES) $(MLPACKFILES))\n";
   end;
   if !some_vfile then
-    print "\trm -f $(VOFILES) $(VIFILES) $(GFILES) $(VFILES:.v=.v.d) $(VFILES:=.beautified) $(VFILES:=.old)\n";
+    print "\trm -f $(VOFILES) $(VOFILES:.vo=.vi) $(GFILES) $(VFILES:.v=.v.d) $(VFILES:=.beautified) $(VFILES:=.old)\n";
   print "\trm -f all.ps all-gal.ps all.pdf all-gal.pdf all.glob $(VFILES:.v=.glob) $(VFILES:.v=.tex) $(VFILES:.v=.g.tex) all-mli.tex\n";
   print "\t- rm -rf html mlihtml uninstall_me.sh\n";
   List.iter
@@ -331,7 +331,7 @@ let implicit () =
     print "%.cmo: %.ml4\n\t$(CAMLC) $(ZDEBUG) $(ZFLAGS) $(PP) -impl $<\n\n";
     print "%.cmx: %.ml4\n\t$(CAMLOPTC) $(ZDEBUG) $(ZFLAGS) $(PP) -impl $<\n\n";
     print "%.ml4.d: %.ml4\n";
-    print "\t$(COQDEP) -slash $(OCAMLLIBS) \"$<\" > \"$@\" || ( RV=$$?; rm -f \"$@\"; exit $${RV} )\n\n" in
+    print "\t$(COQDEP) $(OCAMLLIBS) \"$<\" > \"$@\" || ( RV=$$?; rm -f \"$@\"; exit $${RV} )\n\n" in
   let ml_rules () =
     print "%.cmo: %.ml\n\t$(CAMLC) $(ZDEBUG) $(ZFLAGS) $<\n\n";
     print "%.cmx: %.ml\n\t$(CAMLOPTC) $(ZDEBUG) $(ZFLAGS) $<\n\n";
@@ -344,23 +344,23 @@ let implicit () =
     print "%.cma: | %.mllib\n\t$(CAMLLINK) $(ZDEBUG) $(ZFLAGS) -a -o $@ $^\n\n";
     print "%.cmxa: | %.mllib\n\t$(CAMLOPTLINK) $(ZDEBUG) $(ZFLAGS) -a -o $@ $^\n\n";
     print "%.mllib.d: %.mllib\n";
-    print "\t$(COQDEP) -slash $(COQLIBS) -c \"$<\" > \"$@\" || ( RV=$$?; rm -f \"$@\"; exit $${RV} )\n\n" in
+    print "\t$(COQDEP) $(COQLIBS) -c \"$<\" > \"$@\" || ( RV=$$?; rm -f \"$@\"; exit $${RV} )\n\n" in
   let mlpack_rules () =
     print "%.cmo: | %.mlpack\n\t$(CAMLLINK) $(ZDEBUG) $(ZFLAGS) -pack -o $@ $^\n\n";
     print "%.cmx: | %.mlpack\n\t$(CAMLOPTLINK) $(ZDEBUG) $(ZFLAGS) -pack -o $@ $^\n\n";
     print "%.mlpack.d: %.mlpack\n";
-    print "\t$(COQDEP) -slash $(COQLIBS) -c \"$<\" > \"$@\" || ( RV=$$?; rm -f \"$@\"; exit $${RV} )\n\n";
+    print "\t$(COQDEP) $(COQLIBS) -c \"$<\" > \"$@\" || ( RV=$$?; rm -f \"$@\"; exit $${RV} )\n\n";
 in
   let v_rules () =
     print "%.vo %.glob: %.v\n\t$(COQC) $(COQDEBUG) $(COQFLAGS) $*\n\n";
-    print "%.vi: %.v\n\t$(COQC) -i $(COQDEBUG) $(COQFLAGS) $*\n\n";
+    print "%.vi: %.v\n\t$(COQC) -quick $(COQDEBUG) $(COQFLAGS) $*\n\n";
     print "%.g: %.v\n\t$(GALLINA) $<\n\n";
     print "%.tex: %.v\n\t$(COQDOC) $(COQDOCFLAGS) -latex $< -o $@\n\n";
     print "%.html: %.v %.glob\n\t$(COQDOC) $(COQDOCFLAGS) -html $< -o $@\n\n";
     print "%.g.tex: %.v\n\t$(COQDOC) $(COQDOCFLAGS) -latex -g $< -o $@\n\n";
     print "%.g.html: %.v %.glob\n\t$(COQDOC) $(COQDOCFLAGS)  -html -g $< -o $@\n\n";
     print "%.v.d: %.v\n";
-    print "\t$(COQDEP) -slash $(COQLIBS) \"$<\" > \"$@\" || ( RV=$$?; rm -f \"$@\"; exit $${RV} )\n\n";
+    print "\t$(COQDEP) $(COQLIBS) \"$<\" > \"$@\" || ( RV=$$?; rm -f \"$@\"; exit $${RV} )\n\n";
     print "%.v.beautified:\n\t$(COQC) $(COQDEBUG) $(COQFLAGS) -beautify $*\n\n"
   in
     if !some_mlifile then mli_rules ();
@@ -520,10 +520,10 @@ let main_targets vfiles (mlifiles,ml4files,mlfiles,mllibfiles,mlpackfiles) other
   begin match vfiles with
     |[] -> ()
     |l ->
-      print "VOFILES:=$(VFILES:.v=.vo)\n";
+      print "VO=vo\n";
+      print "VOFILES:=$(VFILES:.v=.$(VO))\n";
       classify_files_by_root "VOFILES" l inc;
       print "GLOBFILES:=$(VFILES:.v=.glob)\n";
-      print "VIFILES:=$(VFILES:.v=.vi)\n";
       print "GFILES:=$(VFILES:.v=.g)\n";
       print "HTMLFILES:=$(VFILES:.v=.html)\n";
       print "GHTMLFILES:=$(VFILES:.v=.g.html)\n"
@@ -616,7 +616,7 @@ let main_targets vfiles (mlifiles,ml4files,mlfiles,mllibfiles,mlpackfiles) other
     end;
   if !some_vfile then
     begin
-      print "spec: $(VIFILES)\n\n";
+      print "quick:\n\t$(MAKE) all VO=vi\n";
       print "gallina: $(GFILES)\n\n";
       print "html: $(GLOBFILES) $(VFILES)\n";
       print "\t- mkdir -p html\n";

@@ -218,10 +218,14 @@ let no_compat_ntn = ref false
 let print_where = ref false
 let print_config = ref false
 
-let get_slave_number = function
-  | "off" -> -1
-  | "on" -> 0
-  | s -> let n = int_of_string s in assert (n > 0); n
+let get_async_proofs_mode opt next = function
+  | "off" -> Flags.APoff
+  | "on" -> Flags.APonParallel 0
+  | "worker" ->
+      let n = int_of_string (next()) in assert (n > 0);
+      Flags.APonParallel n
+  | "lazy" -> Flags.APonLazy
+  | _ -> prerr_endline ("Error: on/off/lazy/worker expected after "^opt); exit 1
 
 let get_bool opt = function
   | "yes" -> true
@@ -238,6 +242,34 @@ let get_host_port opt s =
   | [host; port] -> Some (host, int_of_string port)
   | _ -> prerr_endline ("Error: host:port expected after option "^opt); exit 1
 
+let get_task_list s = List.map int_of_string (Str.split (Str.regexp ",") s)
+
+let vi_tasks = ref []
+
+let add_vi_task f =
+  set_batch_mode ();
+  Flags.make_silent true;
+  vi_tasks := f :: !vi_tasks
+
+let check_vi_tasks () = List.iter Vi_checking.check_vi (List.rev !vi_tasks)
+
+let vi_files = ref []
+let vi_files_j = ref 0
+
+let add_vi_file f =
+  set_batch_mode ();
+  Flags.make_silent true;
+  vi_files := f :: !vi_files
+let set_vi_checking_j j = vi_files_j := int_of_string j
+
+let is_not_dash_option = function
+  | Some f when String.length f > 0 && f.[0] <> '-' -> true
+  | _ -> false
+
+let schedule_vi_checking () =
+  if !vi_files <> [] then
+    Vi_checking.schedule_vi_checking !vi_files_j !vi_files
+
 let parse_args arglist =
   let args = ref arglist in
   let extras = ref [] in
@@ -245,9 +277,13 @@ let parse_args arglist =
   | [] -> List.rev !extras
   | opt :: rem ->
     args := rem;
-    let next () = match rem with
+    let next () = match !args with
       | x::rem -> args := rem; x
       | [] -> error_missing_arg opt
+    in
+    let peek_next () = match !args with
+      | x::_ -> Some x
+      | [] -> None
     in
     begin match opt with
 
@@ -266,12 +302,25 @@ let parse_args arglist =
       | d :: p :: rem -> set_rec_include d p; args := rem
       | _ -> error_missing_arg opt
       end
+    
+    (* Options with two arg *)
+    |"-check-vi-tasks" ->
+        let tno = get_task_list (next ()) in
+        let tfile = next () in
+        add_vi_task (tno,tfile)
+    |"-schedule-vi-checking" ->
+        set_vi_checking_j (next ());
+        add_vi_file (next ());
+        while is_not_dash_option (peek_next ()) do add_vi_file (next ()); done
 
     (* Options with one arg *)
     |"-coqlib" -> Flags.coqlib_spec:=true; Flags.coqlib:=(next ())
-    |"-coq-slaves" -> Flags.coq_slave_mode := (get_slave_number (next ()))
-    |"-coq-slaves-j" -> Flags.coq_slaves_number := (get_int opt (next ()))
-    |"-coq-slaves-opts" -> Flags.coq_slave_options := Some (next ())
+    |"-async-proofs" ->
+        Flags.async_proofs_mode := get_async_proofs_mode opt next (next())
+    |"-async-proofs-j" ->
+        Flags.async_proofs_n_workers := (get_int opt (next ()))
+    |"-async-proofs-worker-flags" ->
+        Flags.async_proofs_worker_flags := Some (next ())
     |"-compat" -> Flags.compat_version := get_compat_version (next ())
     |"-compile" -> add_compile false (next ())
     |"-compile-verbose" -> add_compile true (next ())
@@ -296,6 +345,7 @@ let parse_args arglist =
     |"-batch" -> set_batch_mode ()
     |"-beautify" -> make_beautify true
     |"-boot" -> boot := true; no_load_rc ()
+    |"-bt" -> Backtrace.record_backtrace true
     |"-color" -> Flags.make_term_color true
     |"-config"|"--config" -> print_config := true
     |"-debug" -> set_debug ()
@@ -319,6 +369,7 @@ let parse_args arglist =
     |"-q" -> no_load_rc ()
     |"-quality" -> term_quality := true; no_load_rc ()
     |"-quiet"|"-silent" -> Flags.make_silent true
+    |"-quick" -> Flags.compilation_mode := BuildVi
     |"-time" -> Flags.time := true
     |"-unicode" -> add_require "Utf8_core"
     |"-v"|"--version" -> Usage.version (exitcode ())
@@ -373,7 +424,7 @@ let init arglist =
       if !Flags.ide_slave then begin
         Flags.make_silent true;
         Ide_slave.init_stdout ()
-      end else if !Flags.coq_slave_mode > 0 then begin
+      end else if Flags.async_proofs_is_worker () then begin
         Flags.make_silent true;
         Stm.slave_init_stdout ()
       end;
@@ -396,6 +447,8 @@ let init arglist =
       load_rcfile();
       load_vernacular ();
       compile_files ();
+      schedule_vi_checking ();
+      check_vi_tasks ();
       outputstate ()
     with any ->
       flush_all();
@@ -403,7 +456,7 @@ let init arglist =
         if !batch_mode then mt ()
         else str "Error during initialization:" ++ fnl ()
       in
-      fatal_error (msg ++ Toplevel.print_toplevel_error any)
+      fatal_error (msg ++ Coqloop.print_toplevel_error any)
   end;
   if !batch_mode then begin
     flush_all();
@@ -424,10 +477,10 @@ let start () =
     Dumpglob.noglob () in
   if !Flags.ide_slave then
     Ide_slave.loop ()
-  else if !Flags.coq_slave_mode > 0 then
+  else if Flags.async_proofs_is_worker () then
     Stm.slave_main_loop ()
   else
-    Toplevel.loop();
+    Coqloop.loop();
   (* Initialise and launch the Ocaml toplevel *)
   Coqinit.init_ocaml_path();
   Mltop.ocaml_toploop();

@@ -55,8 +55,9 @@ val conv_leq_vecti :
 val set_vm_conv : (conv_pb -> types conversion_function) -> unit
 val vm_conv : conv_pb -> types conversion_function
 
-val set_nat_conv : (conv_pb -> types conversion_function) -> unit
-val native_conv : conv_pb -> types conversion_function
+val set_nat_conv :
+  (conv_pb -> Nativelambda.evars -> types conversion_function) -> unit
+val native_conv : conv_pb -> Nativelambda.evars -> types conversion_function
 
 val set_default_conv : (conv_pb -> ?l2r:bool -> types conversion_function) -> unit
 val default_conv     : conv_pb -> ?l2r:bool -> types conversion_function
@@ -79,6 +80,7 @@ val hnf_prod_applist : env -> types -> constr list -> types
 
 val dest_prod       : env -> types -> rel_context * types
 val dest_prod_assum : env -> types -> rel_context * types
+val dest_lam_assum  : env -> types -> rel_context * types
 
 exception NotArity
 

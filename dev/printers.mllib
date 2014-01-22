@@ -30,6 +30,7 @@ Dyn
 CUnix
 System
 Envars
+Aux_file
 Profile
 Explore
 Predicate
@@ -104,6 +105,7 @@ Glob_ops
 Redops
 Reductionops
 Inductiveops
+Nativenorm
 Retyping
 Cbv
 Pretype_errors
@@ -139,6 +141,7 @@ Pputils
 Stdarg
 Constrarg
 Constrexpr_ops
+Genintern
 Notation_ops
 Topconstr
 Notation
@@ -148,7 +151,6 @@ Impargs
 Syntax_def
 Implicit_quantifiers
 Smartlocate
-Genintern
 Constrintern
 Modintern
 Constrextern

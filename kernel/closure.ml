@@ -198,7 +198,6 @@ let unfold_red kn =
  *         is stored in the table.
  *  * i_rels is the array of free rel variables together with their optional
  *    body
- *  * i_vars is the list of _defined_ named variables.
  *
  * ref_value_cache searchs in the tab, otherwise uses i_repr to
  * compute the result and store it in the table. If the constant can't
@@ -231,10 +230,15 @@ type 'a infos = {
   i_env : env;
   i_sigma : existential -> constr option;
   i_rels : constr option array;
-  i_vars : (Id.t * constr) list;
   i_tab : 'a KeyTable.t }
 
 let info_flags info = info.i_flags
+
+let rec assoc_defined id = function
+| [] -> raise Not_found
+| (_, None, _) :: ctxt -> assoc_defined id ctxt
+| (id', Some c, _) :: ctxt ->
+  if Id.equal id id' then c else assoc_defined id ctxt
 
 let ref_value_cache info ref =
   try
@@ -251,7 +255,7 @@ let ref_value_cache info ref =
             | None -> raise Not_found
             | Some t -> lift n t
             end
-	| VarKey id -> Id.List.assoc id info.i_vars
+	| VarKey id -> assoc_defined id (named_context info.i_env)
 	| ConstKey cst -> constant_value info.i_env cst
     in
     let v = info.i_repr info body in
@@ -264,16 +268,6 @@ let ref_value_cache info ref =
 
 let evar_value info ev =
   info.i_sigma ev
-
-let defined_vars flags env =
-(*  if red_local_const (snd flags) then*)
-    Context.fold_named_context
-      (fun (id,b,_) e ->
-	 match b with
-	   | None -> e
-	   | Some body -> (id, body)::e)
-       (named_context env) ~init:[]
-(*  else []*)
 
 let defined_rels flags env =
 (*  if red_local_const (snd flags) then*)
@@ -294,7 +288,6 @@ let create mk_cl flgs env evars =
     i_env = env;
     i_sigma = evars;
     i_rels = defined_rels flgs env;
-    i_vars = defined_vars flgs env;
     i_tab = KeyTable.create 17 }
 
 
