@@ -22,10 +22,8 @@ CArray
 CStack
 Util
 Loc
-Flags
 Stateid
 Serialize
-Xml_utils
 CUnix
 Envars
 Aux_file

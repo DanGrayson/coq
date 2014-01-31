@@ -121,6 +121,7 @@ object
   method backtrack_last_phrase : unit task
   method initialize : unit task
   method join_document : unit task
+  method stop_worker : int -> unit task
 
   method get_n_errors : int
   method get_errors : (int * string) list
@@ -348,6 +349,10 @@ object(self)
           remove_flag sentence `PROCESSING;
           remove_flag sentence `ERROR;
           self#mark_as_needed sentence
+      | ProcessingInMaster,  Some (id,sentence) ->
+          log "ProcessingInMaster" id;
+          add_flag sentence `PROCESSING;
+          self#mark_as_needed sentence
       | Incomplete, Some (id, sentence) ->
           log "Incomplete" id;
           add_flag sentence `INCOMPLETE;
@@ -539,6 +544,9 @@ object(self)
          Coq.return ()
      | Fail x -> self#handle_failure x in
    Coq.bind (Coq.status ~logger:messages#push true) next
+
+  method stop_worker n =
+    Coq.bind (Coq.stop_worker n) (fun _ -> Coq.return ())
 
   method get_slaves_status = processed, to_process, slaves_status
 

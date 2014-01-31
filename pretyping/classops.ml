@@ -68,9 +68,9 @@ end
 
 module ClTypMap = Map.Make(ClTyp)
 
-let cl_typ_eq t1 t2 = Int.equal (cl_typ_ord t1 t2) 0
+module IntMap = Map.Make(Int)
 
-type cl_index = int
+let cl_typ_eq t1 t2 = Int.equal (cl_typ_ord t1 t2) 0
 
 type coe_index = coe_info_typ
 
@@ -78,20 +78,39 @@ type inheritance_path = coe_index list
 
 (* table des classes, des coercions et graphe d'heritage *)
 
-module Bijint = struct
-  type 'a t = { v : (cl_typ * 'a) array; s : int; inv : int ClTypMap.t }
-  let empty = { v = [||]; s = 0; inv = ClTypMap.empty }
+module Bijint :
+sig
+  module Index :
+  sig
+    type t
+    val compare : t -> t -> int
+    val equal : t -> t -> bool
+    val print : t -> std_ppcmds
+  end
+  type 'a t
+  val empty : 'a t
+  val mem : cl_typ -> 'a t -> bool
+  val map : Index.t -> 'a t -> cl_typ * 'a
+  val revmap : cl_typ -> 'a t -> Index.t * 'a
+  val add : cl_typ -> 'a -> 'a t -> 'a t
+  val dom : 'a t -> cl_typ list
+end
+=
+struct
+
+  module Index = struct include Int let print = Pp.int end
+
+  type 'a t = { v : (cl_typ * 'a) IntMap.t; s : int; inv : int ClTypMap.t }
+  let empty = { v = IntMap.empty; s = 0; inv = ClTypMap.empty }
   let mem y b = ClTypMap.mem y b.inv
-  let map x b = if 0 <= x && x < b.s then b.v.(x) else raise Not_found
-  let revmap y b = let n = ClTypMap.find y b.inv in (n, snd (b.v.(n)))
+  let map x b = IntMap.find x b.v
+  let revmap y b = let n = ClTypMap.find y b.inv in (n, snd (IntMap.find n b.v))
   let add x y b =
-    let v =
-      if Int.equal b.s (Array.length b.v) then
-	(let v = Array.make (b.s + 8) (x,y) in Array.blit b.v 0 v 0 b.s; v)
-      else b.v in
-    v.(b.s) <- (x,y); { v = v; s = b.s+1; inv = ClTypMap.add x b.s b.inv }
+    { v = IntMap.add b.s (x,y) b.v; s = b.s+1; inv = ClTypMap.add x b.s b.inv }
   let dom b = List.rev (ClTypMap.fold (fun x _ acc -> x::acc) b.inv [])
 end
+
+type cl_index = Bijint.Index.t
 
 let class_tab =
   ref (Bijint.empty : cl_info_typ Bijint.t)
@@ -103,8 +122,8 @@ module ClPairOrd =
 struct
   type t = cl_index * cl_index
   let compare (i1, j1) (i2, j2) =
-    let c = Int.compare i1 i2 in
-    if Int.equal c 0 then Int.compare j1 j2 else c
+    let c = Bijint.Index.compare i1 i2 in
+    if Int.equal c 0 then Bijint.Index.compare j1 j2 else c
 end
 
 module ClPairMap = Map.Make(ClPairOrd)
@@ -292,7 +311,7 @@ let coercion_value { coe_value = c; coe_type = t; coe_is_identity = b } =
 (* rajouter une coercion dans le graphe *)
 
 let path_printer = ref (fun _ -> str "<a class path>"
-                        : (int * int) * inheritance_path -> std_ppcmds)
+                        : (Bijint.Index.t * Bijint.Index.t) * inheritance_path -> std_ppcmds)
 
 let install_path_printer f = path_printer := f
 
@@ -314,7 +333,7 @@ let add_coercion_in_graph (ic,source,target) =
     (ref [] : ((cl_index * cl_index) * inheritance_path) list ref) in
   let try_add_new_path (i,j as ij) p =
     try
-      if Int.equal i j then begin
+      if Bijint.Index.equal i j then begin
 	if different_class_params i j then begin
 	  let _ = lookup_path_between_class ij in
           ambig_paths := (ij,p)::!ambig_paths
@@ -335,16 +354,16 @@ let add_coercion_in_graph (ic,source,target) =
   if try_add_new_path (source,target) [ic] then begin
     ClPairMap.iter
       (fun (s,t) p ->
-         if not (Int.equal s t) then begin
-	   if Int.equal t source then begin
+         if not (Bijint.Index.equal s t) then begin
+	   if Bijint.Index.equal t source then begin
              try_add_new_path1 (s,target) (p@[ic]);
              ClPairMap.iter
 	       (fun (u,v) q ->
-                  if not (Int.equal u v) && Int.equal u target &&  not (List.equal coe_info_typ_equal p q) then
+                  if not (Bijint.Index.equal u v) && Bijint.Index.equal u target &&  not (List.equal coe_info_typ_equal p q) then
 		    try_add_new_path1 (s,v) (p@[ic]@q))
                old_inheritance_graph
            end;
-           if Int.equal s target then try_add_new_path1 (source,t) (ic::p)
+           if Bijint.Index.equal s target then try_add_new_path1 (source,t) (ic::p)
 	 end)
       old_inheritance_graph
   end;
@@ -472,7 +491,7 @@ let declare_coercion coef ?(local = false) ~isid ~src:cls ~target:clt ~params:ps
 (* For printing purpose *)
 let get_coercion_value v = v.coe_value
 
-let pr_cl_index n = int n
+let pr_cl_index = Bijint.Index.print
 
 let classes () = Bijint.dom !class_tab
 let coercions () =

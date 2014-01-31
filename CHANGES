@@ -14,13 +14,21 @@ Vernacular commands
   name "Search" now behaves like former "SearchAbout". The latter name
   is deprecated.
 
-Specification Language
+Notations
 
 - The syntax "x -> y" is now declared at level 99. In particular, it has
   now a lower priority than "<->": "A -> B <-> C" is now "A -> (B <-> C)"
   (possible source of incompatibilities)
+- Notations accept term-provinding tactics using the $(...)$ syntax.
+
+Specification Language
+
 - Slight changes in unification error messages.
 - Added a syntax $(...)$ allowing to put tactics in terms.
+- Constants in pattern-matching branches now respect the same rules regarding
+  implicit arguments than in applicative position. The old behaviour can be
+  recovered by the command "Set Asymmetric Patterns". (possible source of
+  incompatibilities)
 
 Tactics
 
@@ -97,6 +105,10 @@ Internal Infrastructure
   an executable compiled with the best OCaml compiler available.
   The bytecode program coqtop.byte is still produced. Same for other
   utilities.
+- Some options of the ./configure script slightly changed:
+  * The -coqrunbyteflags and its blank-separated argument is replaced
+    by option -vmbyteflags which expects a comma-separated argument.
+  * The -coqtoolsbyteflags option is discontinued, see -no-custom instead.
  
 Changes from V8.4beta2 to V8.4
 ==============================

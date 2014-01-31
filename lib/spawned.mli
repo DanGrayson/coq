@@ -6,9 +6,17 @@
 (*         *       GNU Lesser General Public License Version 2.1        *)
 (************************************************************************)
 
-(* [check_vi tasks file] checks the [tasks] stored in [file] *)
-val check_vi : int list * string -> bool
+(* To link this file, threads are needed *)
 
-(* [schedule_vi_checking j files] prints [j] command lines to
- * be executed in parallel to check all tasks in [files] *)
-val schedule_vi_checking : int -> string list -> unit
+type chandescr = AnonPipe | Socket of string * int
+
+(* Argument parsing should set these *)
+val main_channel : chandescr option ref
+val control_channel : chandescr option ref
+
+(* Immediately after argument parsing one *must* call this *)
+val init_channels : unit -> unit
+
+(* Once initialized, these are the channels to talk with our master *)
+val get_channels : unit -> in_channel * out_channel
+

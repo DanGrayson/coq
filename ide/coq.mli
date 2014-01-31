@@ -86,18 +86,8 @@ val get_arguments : coqtop -> string list
 val set_arguments : coqtop -> string list -> unit
 (** Set process arguments. This also forces a planned reset. *)
 
-(** In win32, we'll use a different kill function than Unix.kill *)
-
-val killer : (int -> unit) ref
-val soft_killer : (int -> unit) ref
-val interrupter : (int -> unit) ref
-
 (** In win32, sockets are not like regular files *)
 val gio_channel_of_descr_socket : (Unix.file_descr -> Glib.Io.channel) ref
-
-val final_countdown : unit -> unit
-(** [final_countdown] triggers an exit of coqide after
-    some last cycles for closing remaining coqtop zombies *)
 
 (** {5 Task processing} *)
 
@@ -140,6 +130,8 @@ val inloadpath : Interface.inloadpath_sty -> Interface.inloadpath_rty query
 val mkcases    : Interface.mkcases_sty    -> Interface.mkcases_rty query
 val search     : Interface.search_sty     -> Interface.search_rty query
 val init       : Interface.init_sty       -> Interface.init_rty query
+
+val stop_worker: Interface.stop_worker_sty-> Interface.stop_worker_rty query
 
 (** A specialized version of [raw_interp] dedicated to set/unset options. *)
 

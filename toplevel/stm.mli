@@ -38,13 +38,15 @@ val edit_at : Stateid.t -> [ `NewTip | `Focus of focus ]
 (* Evaluates the tip of the current branch *)
 val finish : unit -> unit
 
+val stop_worker : int -> unit
+
 (* Joins the entire document.  Implies finish, but also checks proofs *)
 val join : unit -> unit
 (* To save to disk an incomplete document *)
 type tasks
 val dump : unit -> tasks
 
-val check_task : string -> tasks -> int -> unit
+val check_task : string -> tasks -> int -> bool
 val info_tasks : tasks -> (string * float * int) list
 
 (* Id of the tip of the current branch *)

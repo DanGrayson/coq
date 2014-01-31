@@ -58,14 +58,9 @@ END
 
 (* Errors *)
 
-let error_expect_two_arguments loc =
-  user_err_loc (loc,"",str "wrong number of arguments (expect two).")
-
-let error_expect_one_argument loc =
-  user_err_loc (loc,"",str "wrong number of arguments (expect one).")
-
-let error_expect_no_argument loc =
-  user_err_loc (loc,"",str "wrong number of arguments (expect none).")
+let error_bad_arity loc n =
+  let s = match n with 0 -> "none" | 1 -> "one" | 2 -> "two" | _ -> "many" in
+  user_err_loc (loc,"",str ("wrong number of arguments (expect "^s^")."))
 
 (* Interpreting attributes *)
 
@@ -82,25 +77,37 @@ let get_xml_attr s al =
 let ident_of_cdata (loc,a) = Id.of_string a
 
 let uri_of_data s =
-  let n = String.index s ':' in
-  let p = String.index s '.' in
-  let s = String.sub s (n+2) (p-n-2) in
-  for i = 0 to String.length s - 1 do
-    match s.[i] with
-    | '/' -> s.[i] <- '.'
-    | _ -> ()
-  done;
-  qualid_of_string s
+  try
+    let n = String.index s ':' in
+    let p = String.index s '.' in
+    let s = String.sub s (n+2) (p-n-2) in
+    for i = 0 to String.length s - 1 do
+      match s.[i] with
+      | '/' -> s.[i] <- '.'
+      | _ -> ()
+    done;
+    qualid_of_string s
+  with Not_found | Invalid_argument _ ->
+    error ("Malformed URI \""^s^"\"")
 
-let constant_of_cdata (loc,a) = Nametab.locate_constant (uri_of_data a)
+let constant_of_cdata (loc,a) =
+  let q = uri_of_data a in
+  try Nametab.locate_constant q
+  with Not_found -> error ("No such constant "^string_of_qualid q)
 
-let global_of_cdata (loc,a) = Nametab.locate (uri_of_data a)
+let global_of_cdata (loc,a) =
+  let q = uri_of_data a in
+  try Nametab.locate q
+  with Not_found -> error ("No such global "^string_of_qualid q)
 
 let inductive_of_cdata a = match global_of_cdata a with
-    | IndRef (kn,_) -> kn
-    | _ -> anomaly ~label:"XML parser" (str "not an inductive")
+  | IndRef (kn,_) -> kn
+  | _ -> error (string_of_qualid (uri_of_data (snd a)) ^" is not an inductive")
 
-let ltacref_of_cdata (loc,a) = (loc,locate_tactic (uri_of_data a))
+let ltacref_of_cdata (loc,a) =
+  let q = uri_of_data a in
+  try (loc,Nametab.locate_tactic q)
+  with Not_found -> error ("No such ltac "^string_of_qualid q)
 
 let sort_of_cdata (loc,a) = match a with
   | "Prop" -> GProp
@@ -213,7 +220,7 @@ and interp_xml_tag s = function
 and interp_xml_constr_alias s x =
   match interp_xml_tag s x with
     | (_,_,[x]) -> interp_xml_constr x
-    | (loc,_,_) -> error_expect_one_argument loc
+    | (loc,_,_) -> error_bad_arity loc 1
 
 and interp_xml_term x = interp_xml_constr_alias "term" x
 and interp_xml_type x = interp_xml_constr_alias "type" x
@@ -229,7 +236,7 @@ and interp_xml_substitution x = interp_xml_constr_alias "substitution" x
 and interp_xml_decl_alias s x =
   match interp_xml_tag s x with
     | (_,al,[x]) -> (get_xml_binder al, interp_xml_constr x)
-    | (loc,_,_) -> error_expect_one_argument loc
+    | (loc,_,_) -> error_bad_arity loc 1
 
 and interp_xml_def x = interp_xml_decl_alias "def" x
 and interp_xml_decl x = interp_xml_decl_alias "decl" x
@@ -237,20 +244,14 @@ and interp_xml_decl x = interp_xml_decl_alias "decl" x
 and interp_xml_recursionOrder x =
   let (loc, al, l) = interp_xml_tag "RecursionOrder" x in
   let (locs, s) = get_xml_attr "type" al in
-    match s with
-	"Structural" ->
-	  (match l with [] -> GStructRec
-	     | _ -> error_expect_no_argument loc)
-      | "WellFounded" ->
-	  (match l with
-	       [c] -> GWfRec (interp_xml_type c)
-	     | _ -> error_expect_one_argument loc)
-      | "Measure" ->
-	  (match l with
-	       [m;r] -> GMeasureRec (interp_xml_type m, Some (interp_xml_type r))
-	     | _ -> error_expect_two_arguments loc)
-      | _ ->
-          user_err_loc (locs,"",str "Invalid recursion order.")
+  match s, l with
+  | "Structural", [] -> GStructRec
+  | "Structural", _ -> error_bad_arity loc 0
+  | "WellFounded", [c] -> GWfRec (interp_xml_type c)
+  | "WellFounded", _ -> error_bad_arity loc 1
+  | "Measure", [m;r] -> GMeasureRec (interp_xml_type m, Some (interp_xml_type r))
+  | "Measure", _ -> error_bad_arity loc 2
+  | _ -> user_err_loc (locs,"",str "Invalid recursion order.")
 
 and interp_xml_FixFunction x =
   match interp_xml_tag "FixFunction" x with
@@ -262,14 +263,14 @@ and interp_xml_FixFunction x =
       ((Some (nmtoken (get_xml_attr "recIndex" al)), GStructRec),
        (get_xml_name al, interp_xml_type x1, interp_xml_body x2))
   | (loc,_,_) ->
-      error_expect_one_argument loc
+      error_bad_arity loc 1
 
 and interp_xml_CoFixFunction x =
   match interp_xml_tag "CoFixFunction" x with
   | (loc,al,[x1;x2]) ->
       (get_xml_name al, interp_xml_type x1, interp_xml_body x2)
     | (loc,_,_) ->
-	error_expect_one_argument loc
+	error_bad_arity loc 1
 
 (* Interpreting tactic argument *)
 
