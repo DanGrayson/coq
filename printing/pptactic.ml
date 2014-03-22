@@ -18,7 +18,6 @@ open Constrarg
 open Libnames
 open Ppextend
 open Misctypes
-open Miscops
 open Locus
 open Decl_kinds
 open Genredexpr
@@ -287,8 +286,6 @@ let pr_raw_alias prc prlc prtac prpat =
   pr_alias_gen (pr_raw_generic prc prlc prtac prpat pr_reference)
 let pr_glob_alias prc prlc prtac prpat =
   pr_alias_gen (pr_glb_generic prc prlc prtac prpat)
-let pr_alias prc prlc prtac prpat =
-  pr_extend_gen (pr_top_generic prc prlc prtac prpat)
 
 (**********************************************************************)
 (* The tactic printer                                                 *)
@@ -342,8 +339,8 @@ let pr_bindings prlc prc = pr_bindings_gen false prlc prc
 let pr_with_bindings prlc prc (c,bl) =
   hov 1 (prc c ++ pr_bindings prlc prc bl)
 
-let pr_as_ipat pat = str "as " ++ pr_intro_pattern pat
-let pr_eqn_ipat pat = str "eqn:" ++ pr_intro_pattern pat
+let pr_as_ipat pat = str "as " ++ Miscprint.pr_intro_pattern pat
+let pr_eqn_ipat pat = str "eqn:" ++ Miscprint.pr_intro_pattern pat
 
 let pr_with_induction_names = function
   | None, None -> mt ()
@@ -353,7 +350,7 @@ let pr_with_induction_names = function
     spc () ++ hov 1 (pr_as_ipat ipat ++ spc () ++ pr_eqn_ipat eqpat)
 
 let pr_as_intro_pattern ipat =
-  spc () ++ hov 1 (str "as" ++ spc () ++ pr_intro_pattern ipat)
+  spc () ++ hov 1 (str "as" ++ spc () ++ Miscprint.pr_intro_pattern ipat)
 
 let pr_with_inversion_names = function
   | None -> mt ()
@@ -645,13 +642,15 @@ and pr_atom1 = function
   (* Basic tactics *)
   | TacIntroPattern [] as t -> pr_atom0 t
   | TacIntroPattern (_::_ as p) ->
-      hov 1 (str "intros" ++ spc () ++ prlist_with_sep spc pr_intro_pattern p)
+      hov 1 (str "intros" ++ spc () ++
+             prlist_with_sep spc Miscprint.pr_intro_pattern p)
   | TacIntrosUntil h ->
       hv 1 (str "intros until" ++ pr_arg pr_quantified_hypothesis h)
   | TacIntroMove (None,MoveLast) as t -> pr_atom0 t
   | TacIntroMove (Some id,MoveLast) -> str "intro " ++ pr_id id
   | TacIntroMove (ido,hto) ->
-      hov 1 (str"intro" ++ pr_opt pr_id ido ++ Miscops.pr_move_location pr_ident hto)
+      hov 1 (str"intro" ++ pr_opt pr_id ido ++
+             Miscprint.pr_move_location pr_ident hto)
   | TacAssumption as t -> pr_atom0 t
   | TacExact c -> hov 1 (str "exact" ++ pr_constrarg c)
   | TacExactNoCheck c -> hov 1 (str "exact_no_check" ++ pr_constrarg c)
@@ -764,7 +763,7 @@ and pr_atom1 = function
       assert b;
       hov 1
         (str "move" ++ brk (1,1) ++ pr_ident id1 ++
-	 Miscops.pr_move_location pr_ident id2)
+	 Miscprint.pr_move_location pr_ident id2)
   | TacRename l ->
       hov 1
         (str "rename" ++ brk (1,1) ++
@@ -1024,17 +1023,17 @@ let pr_glob_tactic env = pr_glob_tactic_level env ltop
 
 (** Registering *)
 
-let register_uniform_printer wit pr =
-  Genprint.register_print0 wit pr pr pr
-
 let () =
   let pr_bool b = if b then str "true" else str "false" in
   let pr_unit _ = str "()" in
   let pr_string s = str "\"" ++ str s ++ str "\"" in
   Genprint.register_print0 Constrarg.wit_ref
     pr_reference (pr_or_var (pr_located pr_global)) pr_global;
-  Genprint.register_print0 Constrarg.wit_intro_pattern
-    pr_intro_pattern pr_intro_pattern pr_intro_pattern;
+  Genprint.register_print0
+    Constrarg.wit_intro_pattern
+    Miscprint.pr_intro_pattern
+    Miscprint.pr_intro_pattern
+    Miscprint.pr_intro_pattern;
   Genprint.register_print0 Constrarg.wit_sort
     pr_glob_sort pr_glob_sort pr_sort;
   Genprint.register_print0 Stdarg.wit_int int int int;

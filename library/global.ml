@@ -129,7 +129,7 @@ let mind_of_delta_kn kn =
 
 let start_library dir = globalize (Safe_typing.start_library dir)
 let export s = Safe_typing.export !Flags.compilation_mode (safe_env ()) s
-let import cenv digest = globalize (Safe_typing.import cenv digest)
+let import c u d = globalize (Safe_typing.import c u d)
 
 
 (** Function to get an environment from the constants part of the global
@@ -156,7 +156,7 @@ let type_of_global t = type_of_reference (env ()) t
 
 (* spiwack: register/unregister functions for retroknowledge *)
 let register field value by_clause =
-  globalize0 (Safe_typing.register field (kind_of_term value) by_clause)
+  globalize0 (Safe_typing.register field value by_clause)
 
 let register_inline c = globalize0 (Safe_typing.register_inline c)
 

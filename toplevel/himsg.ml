@@ -14,7 +14,6 @@ open Namegen
 open Term
 open Termops
 open Indtypes
-open Context
 open Environ
 open Pretype_errors
 open Type_errors
@@ -24,9 +23,6 @@ open Cases
 open Logic
 open Printer
 open Evd
-open Libnames
-open Globnames
-open Declarations
 
 (* This simplifies the typing context of Cases clauses *)
 (* hope it does not disturb other typing contexts *)
@@ -493,16 +489,6 @@ let explain_evar_kind env evi = function
   | Evar_kinds.MatchingVar _ ->
       assert false
 
-let explain_not_clean env sigma ev t k =
-  let t = Evarutil.nf_evar sigma t in
-  let env = make_all_name_different env in
-  let id = Evd.string_of_existential ev in
-  let var = pr_lconstr_env env t in
-  str "Tried to instantiate " ++ explain_evar_kind env None k ++
-  str " (" ++ str id ++ str ")" ++ spc () ++
-  str "with a term using variable " ++ var ++ spc () ++
-  str "which is not in its scope."
-
 let explain_unsolvability = function
   | None -> mt()
   | Some (SeveralInstancesFound n) ->
@@ -828,9 +814,6 @@ let explain_no_instance env (_,id) l =
   str "applied to arguments" ++ spc () ++
     pr_sequence (pr_lconstr_env env) l
 
-let is_goal_evar evi =
-  match evi.evar_source with (_, Evar_kinds.GoalEvar) -> true | _ -> false
-
 let pr_constraints printenv env evd evars cstrs =
   let (ev, evi) = Evar.Map.choose evars in
     if Evar.Map.for_all (fun ev' evi' ->
@@ -1149,61 +1132,57 @@ let explain_reduction_tactic_error = function
 
 let is_defined_ltac trace =
   let rec aux = function
-  | (_,_,Proof_type.LtacNameCall _) :: tail -> true
-  | (_,_,Proof_type.LtacAtomCall _) :: tail -> false
+  | (_, Proof_type.LtacNameCall _) :: tail -> true
+  | (_, Proof_type.LtacAtomCall _) :: tail -> false
   | _ :: tail -> aux tail
   | [] -> false in
   aux (List.rev trace)
 
-let explain_ltac_call_trace (nrep,last,trace,loc) =
-  let calls =
-    (nrep,last) :: List.rev_map (fun(n,_,ck)->(n,ck)) trace
+let explain_ltac_call_trace last trace loc =
+  let calls = last :: List.rev_map snd trace in
+  let pr_call ck = match ck with
+  | Proof_type.LtacNotationCall kn -> quote (KerName.print kn)
+  | Proof_type.LtacNameCall cst -> quote (Pptactic.pr_ltac_constant cst)
+  | Proof_type.LtacVarCall (id,t) ->
+      quote (Nameops.pr_id id) ++ strbrk " (bound to " ++
+        Pptactic.pr_glob_tactic (Global.env()) t ++ str ")"
+  | Proof_type.LtacAtomCall te ->
+      quote (Pptactic.pr_glob_tactic (Global.env())
+              (Tacexpr.TacAtom (Loc.ghost,te)))
+  | Proof_type.LtacConstrInterp (c,(vars,unboundvars)) ->
+      quote (pr_glob_constr_env (Global.env()) c) ++
+        (if not (Id.Map.is_empty vars) then
+          strbrk " (with " ++
+            prlist_with_sep pr_comma
+            (fun (id,c) ->
+                pr_id id ++ str ":=" ++ Printer.pr_lconstr_under_binders c)
+            (List.rev (Id.Map.bindings vars)) ++ str ")"
+        else mt())
   in
-  let pr_call (n,ck) =
-    (match ck with
-       | Proof_type.LtacNotationCall kn -> quote (KerName.print kn)
-       | Proof_type.LtacNameCall cst -> quote (Pptactic.pr_ltac_constant cst)
-       | Proof_type.LtacVarCall (id,t) ->
-	   quote (Nameops.pr_id id) ++ strbrk " (bound to " ++
-	     Pptactic.pr_glob_tactic (Global.env()) t ++ str ")"
-       | Proof_type.LtacAtomCall te ->
-	   quote (Pptactic.pr_glob_tactic (Global.env())
-		    (Tacexpr.TacAtom (Loc.ghost,te)))
-       | Proof_type.LtacConstrInterp (c,(vars,unboundvars)) ->
-	   quote (pr_glob_constr_env (Global.env()) c) ++
-	     (if not (Id.Map.is_empty vars) then
-		strbrk " (with " ++
-		  prlist_with_sep pr_comma
-		  (fun (id,c) ->
-		     pr_id id ++ str ":=" ++ Printer.pr_lconstr_under_binders c)
-		  (List.rev (Id.Map.bindings vars)) ++ str ")"
-	      else mt())) ++
-      (if Int.equal n 2 then str " (repeated twice)"
-       else if n>2 then str " (repeated "++int n++str" times)"
-       else mt()) in
-    if not (List.is_empty calls) then
-      let kind_of_last_call = match List.last calls with
-    | (_,Proof_type.LtacConstrInterp _) -> ", last term evaluation failed."
-    | _ -> ", last call failed." in
+  match calls with
+  | [] -> mt ()
+  | _ ->
+    let kind_of_last_call = match List.last calls with
+    | Proof_type.LtacConstrInterp _ -> ", last term evaluation failed."
+    | _ -> ", last call failed."
+    in
     hov 0 (str "In nested Ltac calls to " ++
            pr_enum pr_call calls ++ strbrk kind_of_last_call)
-  else
-    mt ()
 
 let skip_extensions trace =
   let rec aux = function
-  | (_,_,Proof_type.LtacAtomCall
+  | (_,Proof_type.LtacAtomCall
       (Tacexpr.TacAlias _ | Tacexpr.TacExtend _) as tac) :: tail -> [tac]
   | _ :: tail -> aux tail
   | [] -> [] in
   List.rev (aux (List.rev trace))
 
 let extract_ltac_trace trace eloc =
-  let (nrep,loc,c),tail = List.sep_last trace in
+  let (loc,c),tail = List.sep_last trace in
   if is_defined_ltac trace then
     (* We entered a user-defined tactic,
        we display the trace with location of the call *)
-    let msg = hov 0 (explain_ltac_call_trace (nrep,c,tail,eloc) ++ fnl()) in
+    let msg = hov 0 (explain_ltac_call_trace c tail eloc ++ fnl()) in
     Some msg, loc
   else
     (* We entered a primitive tactic, we don't display trace but
@@ -1212,7 +1191,7 @@ let extract_ltac_trace trace eloc =
       if not (Loc.is_ghost eloc) then eloc else
         (* trace is with innermost call coming first *)
         let rec aux = function
-        | (_,loc,_)::tail when not (Loc.is_ghost loc) -> loc
+        | (loc,_)::tail when not (Loc.is_ghost loc) -> loc
         | _::tail -> aux tail
         | [] -> Loc.ghost in
         aux (skip_extensions trace) in

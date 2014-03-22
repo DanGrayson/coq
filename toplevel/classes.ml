@@ -10,8 +10,6 @@
 open Names
 open Term
 open Vars
-open Context
-open Evd
 open Environ
 open Nametab
 open Errors
@@ -26,7 +24,6 @@ open Constrexpr
 
 open Decl_kinds
 open Entries
-open Misctypes
 
 let typeclasses_db = "typeclass_instances"
 
@@ -64,8 +61,6 @@ let existing_instance glob g pri =
 
 let mismatched_params env n m = mismatched_ctx_inst env Parameters n m
 let mismatched_props env n m = mismatched_ctx_inst env Properties n m
-
-type binder_list = (Id.t Loc.located * bool * constr_expr) list
 
 (* Declare everything in the parameters as implicit, and the class instance as well *)
 

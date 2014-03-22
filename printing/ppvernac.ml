@@ -130,17 +130,7 @@ let pr_search a b pr_p = match a with
   | SearchRewrite c -> str"SearchRewrite" ++ spc() ++ pr_p c ++ pr_in_out_modules b
   | SearchAbout sl -> str"Search" ++ spc() ++ prlist_with_sep spc pr_search_about sl ++ pr_in_out_modules b
 
-let pr_locality_full = function
-  | None -> mt ()
-  | Some true -> str "Local" ++ spc ()
-  | Some false -> str "Global "++ spc ()
-
 let pr_locality local = if local then str "Local" ++ spc () else mt ()
-let pr_non_locality local = if local then mt () else str "Global" ++ spc ()
-let pr_section_locality local =
-  if Lib.sections_are_opened () && not local then str "Global "
-  else if not (Lib.sections_are_opened ()) && local then str "Local "
-  else mt ()
 
 let pr_explanation (e,b,f) =
   let a = match e with
@@ -469,6 +459,8 @@ let pr_printable = function
   in
   str cmd ++ spc() ++ pr_smart_global qid
 | PrintNamespace dp -> str "Print Namespace" ++ pr_dirpath dp
+| PrintStrategy None -> str "Print Strategies"
+| PrintStrategy (Some qid) -> str "Print Strategy" ++ pr_smart_global qid
 in
 
 let pr_using e = str (Proof_using.to_string e) in
@@ -858,8 +850,8 @@ let rec pr_vernac = function
       prlist_with_sep (fun () -> str", ") (aux nargs) impl ++
       if not (List.is_empty mods) then str" : " else str"" ++
       prlist_with_sep (fun () -> str", " ++ spc()) (function
-        | `SimplDontExposeCase -> str "simpl nomatch"
-        | `SimplNeverUnfold -> str "simpl never"
+        | `ReductionDontExposeCase -> str "simpl nomatch"
+        | `ReductionNeverUnfold -> str "simpl never"
         | `DefaultImplicits -> str "default implicits"
         | `Rename -> str "rename"
         | `ExtraScopes -> str "extra scopes"

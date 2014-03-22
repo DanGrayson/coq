@@ -243,9 +243,10 @@ sig
   (** Comparisons *)
   val compare : t -> t -> int
   val equal : t -> t -> bool
+  val hash : t -> int
 end
 
-module KNset  : Set.S with type elt = KerName.t
+module KNset  : CSig.SetS with type elt = KerName.t
 module KNpred : Predicate.S with type elt = KerName.t
 module KNmap  : Map.ExtS with type key = KerName.t and module Set := KNset
 
@@ -289,11 +290,13 @@ sig
   module CanOrd : sig
     val compare : t -> t -> int
     val equal : t -> t -> bool
+    val hash : t -> int
   end
 
   module UserOrd : sig
     val compare : t -> t -> int
     val equal : t -> t -> bool
+    val hash : t -> int
   end
 
   val equal : t -> t -> bool
@@ -317,8 +320,8 @@ end
 (** The [*_env] modules consider an order on user part of names
    the others consider an order on canonical part of names*)
 module Cpred : Predicate.S with type elt = Constant.t
-module Cset : Set.S with type elt = Constant.t
-module Cset_env  : Set.S with type elt = Constant.t
+module Cset : CSig.SetS with type elt = Constant.t
+module Cset_env  : CSig.SetS with type elt = Constant.t
 module Cmap : Map.ExtS with type key = Constant.t and module Set := Cset
 module Cmap_env : Map.ExtS with type key = Constant.t  and module Set := Cset_env
 
@@ -361,15 +364,19 @@ sig
   module CanOrd : sig
     val compare : t -> t -> int
     val equal : t -> t -> bool
+    val hash : t -> int
   end
 
   module UserOrd : sig
     val compare : t -> t -> int
     val equal : t -> t -> bool
+    val hash : t -> int
   end
 
   val equal : t -> t -> bool
   (** Default comparison, alias for [CanOrd.equal] *)
+
+  val hash : t -> int
 
   (** Displaying *)
 
@@ -380,7 +387,7 @@ sig
 
 end
 
-module Mindset : Set.S with type elt = MutInd.t
+module Mindset : CSig.SetS with type elt = MutInd.t
 module Mindmap : Map.ExtS with type key = MutInd.t and module Set := Mindset
 module Mindmap_env : Map.S with type key = MutInd.t
 
@@ -406,10 +413,12 @@ val eq_ind : inductive -> inductive -> bool
 val ind_ord : inductive -> inductive -> int
 val ind_hash : inductive -> int
 val ind_user_ord : inductive -> inductive -> int
+val ind_user_hash : inductive -> int
 val eq_constructor : constructor -> constructor -> bool
 val constructor_ord : constructor -> constructor -> int
 val constructor_user_ord : constructor -> constructor -> int
 val constructor_hash : constructor -> int
+val constructor_user_hash : constructor -> int
 
 (** Better to have it here that in Closure, since required in grammar.cma *)
 type evaluable_global_reference =

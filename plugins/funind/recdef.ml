@@ -10,7 +10,6 @@ open Term
 open Vars
 open Namegen
 open Environ
-open Declarations
 open Declareops
 open Entries
 open Pp
@@ -24,7 +23,6 @@ open Tacticals
 open Tacmach
 open Tactics
 open Nametab
-open Decls
 open Declare
 open Decl_kinds
 open Tacred
@@ -140,7 +138,6 @@ let iter_ref () =
 let iter = function () -> (constr_of_global (delayed_force iter_ref))
 let eq = function () -> (coq_base_constant "eq")
 let le_lt_SS = function () -> (constant ["Recdef"] "le_lt_SS")
-let acc_intro_generator_function = function () -> (constant ["Recdef"] "Acc_intro_generator_function")
 let le_lt_n_Sm = function () -> (coq_base_constant "le_lt_n_Sm")
 let le_trans = function () -> (coq_base_constant "le_trans")
 let le_lt_trans = function () -> (coq_base_constant "le_lt_trans")
@@ -278,7 +275,7 @@ let tclUSER tac is_mes l g =
 let tclUSER_if_not_mes concl_tac is_mes names_to_suppress =
   if is_mes
   then tclCOMPLETE (Simple.apply (delayed_force well_founded_ltof))
-  else tclTHEN (Simple.apply (delayed_force acc_intro_generator_function) ) (tclUSER concl_tac is_mes names_to_suppress)
+  else (* tclTHEN (Simple.apply (delayed_force acc_intro_generator_function) ) *) (tclUSER concl_tac is_mes names_to_suppress)
 
 
 

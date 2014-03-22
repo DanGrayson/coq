@@ -260,30 +260,21 @@ val tclTIMEOUT : int -> 'a tactic -> 'a tactic
 (** [mark_as_unsafe] signals that the current tactic is unsafe. *)
 val mark_as_unsafe : unit tactic
 
-val list_map : ('a -> 'b tactic) -> 'a list -> 'b list tactic
+module Monad : Monad.S with type +'a t = 'a tactic
 
 (*** Commands ***)
 
 val in_proofview : proofview -> (Evd.evar_map -> 'a) -> 'a
 
-(* spiwack: to help using `bind' like construct consistently. A glist
-   is promissed to have exactly one element per goal when it is
-   produced. *)
-type 'a glist  = private 'a list
-
 (* Notations for building tactics. *)
 module Notations : sig
 
   (* tclBIND *)
-  val (>=) : 'a tactic -> ('a -> 'b tactic) -> 'b tactic
+  val (>>=) : 'a tactic -> ('a -> 'b tactic) -> 'b tactic
   (* [t >>= k] is [t >= fun l -> tclDISPATCH (List.map k l)].
      The [t] is supposed to return a list of values of the size of the
      list of goals. [k] is then applied to each of this value in the
      corresponding goal. *)
-  val (>>=) : 'a glist tactic -> ('a -> unit tactic) -> unit tactic
-  (* [t >>== k] acts as [t] except that [k] returns a list of value
-     corresponding to its produced subgoals. *)
-  val (>>==) : 'a glist tactic -> ('a -> 'b glist tactic) -> 'b glist tactic
 
   (* tclTHEN *)
   val (<*>) : unit tactic -> 'a tactic -> 'a tactic
@@ -333,6 +324,10 @@ module V82 : sig
   (* exception for which it is deemed to be safe to transmute into
      tactic failure. *)
   val catchable_exception : exn -> bool
+
+  (* transforms every Ocaml (catchable) exception into a failure in
+     the monad. *)
+  val wrap_exceptions : (unit -> 'a tactic) -> 'a tactic
 end
 
 (* The module goal provides an interface for goal-dependent tactics. *)
@@ -340,36 +335,42 @@ end
    Eventually I'll try to remove it in favour of [Proofview.Goal] *)
 module Goal : sig
 
-  (* The type of goals *)
-  type t
+  (** The type of goals. The parameter type is a phantom argument indicating
+      whether the data contained in the goal has been normalized w.r.t. the
+      current sigma. If it is the case, it is flagged [ `NF ]. You may still
+      access the un-normalized data using {!assume} if you known you do not rely
+      on the assumption of being normalized, at your own risk. *)
+  type 'a t
+
+  (** Assume that you do not need the goal to be normalized. *)
+  val assume : 'a t -> [ `NF ] t
 
   (* [concl], [hyps], [env] and [sigma] given a goal [gl] return
      respectively the conclusion of [gl], the hypotheses of [gl], the
      environment of [gl] (i.e. the global environment and the hypotheses)
      and the current evar map. *)
-  val concl : t -> Term.constr
-  val hyps : t -> Context.named_context
-  val env : t -> Environ.env
-  val sigma : t -> Evd.evar_map
+  val concl : [ `NF ] t -> Term.constr
+  val hyps : [ `NF ] t -> Context.named_context
+  val env : 'a t -> Environ.env
+  val sigma : 'a t -> Evd.evar_map
 
-  (* [lift_sensitive s] returns the list corresponding to the evaluation
-     of [s] on each of the focused goals *)
-  val lift : 'a Goal.sensitive -> 'a glist tactic
-
-  (* [return x] returns a copy of [x] per focused goal. *)
-  val return : 'a -> 'a glist tactic
+  (* [lift_sensitive s k] applies [s] in each goal independently
+     raising result [a] then continues with [k a]. *)
+  val lift : 'a Goal.sensitive -> ('a->unit tactic) -> unit tactic
 
   (* [enter t] execute the goal-dependent tactic [t] in each goal
      independently. In particular [t] need not backtrack the same way in
      each goal. *)
-  val enter : (t -> unit tactic) -> unit tactic
-  (* [enterl t] works like [enter t] except that [t] returns a value
-     in each of the produced subgoals. *)
-  val enterl : (t -> 'a glist tactic) -> 'a glist tactic
+  val enter : ([ `NF ] t -> unit tactic) -> unit tactic
 
+  val raw_enter : ([ `LZ ] t -> unit tactic) -> unit tactic
 
   (* compatibility: avoid if possible *)
-  val goal : t -> Goal.goal
+  val goal : [ `NF ] t -> Goal.goal
+
+  (** [refresh g] updates the [sigma g] to the current value, may be
+      useful with compatibility functions like [Tacmach.New.of_old] *)
+  val refresh_sigma : 'a t -> 'a t tactic
 end
 
 (* The [NonLogical] module allows to execute side effects in tactics

@@ -1,8 +1,13 @@
 Coq_config
 
+Canary
 Hook
+Hashset
+Hashcons
+CSet
 CMap
 Int
+HMap
 Option
 Store
 Exninfo
@@ -13,8 +18,6 @@ Pp_control
 Flags
 Pp
 Deque
-Hashset
-Hashcons
 CObj
 CList
 CString
@@ -27,3 +30,4 @@ Serialize
 CUnix
 Envars
 Aux_file
+Monad

@@ -153,40 +153,6 @@ let print_argument_scopes prefix = function
       str "]")]
   | _  -> []
 
-(*****************************)
-(** Printing simpl behaviour *)
-
-let print_simpl_behaviour ref =
-  match Tacred.get_simpl_behaviour ref with
-  | None -> []
-  | Some (recargs, nargs, flags) ->
-     let never = List.mem `SimplNeverUnfold flags in
-     let nomatch = List.mem `SimplDontExposeCase flags in
-     let pp_nomatch = spc() ++ if nomatch then
-       str "avoiding to expose match constructs" else str"" in
-     let pp_recargs = spc() ++ str "when the " ++
-       pr_enum (fun x -> pr_nth (x+1)) recargs ++ str (String.plural (List.length recargs) " argument") ++
-       str (String.plural (if List.length recargs >= 2 then 1 else 2) " evaluate") ++
-       str " to a constructor" in
-     let pp_nargs =
-       spc() ++ str "when applied to " ++ int nargs ++
-       str (String.plural nargs " argument") in
-     [hov 2 (str "The simpl tactic " ++
-     match recargs, nargs, never with
-     | _,_, true -> str "never unfolds " ++ pr_global ref
-     | [], 0, _ -> str "always unfolds " ++ pr_global ref
-     | _::_, n, _ when n < 0 ->
-        str "unfolds " ++ pr_global ref ++ pp_recargs ++ pp_nomatch
-     | _::_, n, _ when n > List.fold_left max 0 recargs ->
-        str "unfolds " ++ pr_global ref ++ pp_recargs ++
-        str " and" ++ pp_nargs ++ pp_nomatch
-     | _::_, _, _ ->
-        str "unfolds " ++ pr_global ref ++ pp_recargs ++ pp_nomatch
-     | [], n, _ when n > 0 ->
-        str "unfolds " ++ pr_global ref ++ pp_nargs ++ pp_nomatch
-     | _ -> str "unfolds " ++ pr_global ref ++ pp_nomatch )]
-;;
-
 (*********************)
 (** Printing Opacity *)
 
@@ -419,11 +385,11 @@ let print_constant with_values sep sp =
 	str"*** [ " ++
 	print_basename sp ++ str " : " ++ cut () ++ pr_ltype typ ++
 	str" ]" ++
-	Printer.pr_univ_cstr (Future.force cb.const_constraints)
+	Printer.pr_univ_cstr (Declareops.constraints_of_constant cb)
     | _ ->
 	print_basename sp ++ str sep ++ cut () ++
 	(if with_values then print_typed_body (val_0,typ) else pr_ltype typ)++
-        Printer.pr_univ_cstr (Future.force cb.const_constraints))
+        Printer.pr_univ_cstr (Declareops.constraints_of_constant cb))
 
 let gallina_print_constant_with_infos sp =
   print_constant true " = " sp ++
@@ -565,12 +531,11 @@ let print_full_pure_context () =
 	      | OpaqueDef lc ->
 		str "Theorem " ++ print_basename con ++ cut () ++
 		str " : " ++ pr_ltype typ ++ str "." ++ fnl () ++
-		str "Proof " ++ pr_lconstr
-                  (Lazyconstr.force_opaque (Future.force lc))
+		str "Proof " ++ pr_lconstr (Opaqueproof.force_proof lc)
 	      | Def c ->
 		str "Definition " ++ print_basename con ++ cut () ++
 		str "  : " ++ pr_ltype typ ++ cut () ++ str " := " ++
-		pr_lconstr (Lazyconstr.force c))
+		pr_lconstr (Mod_subst.force_constr c))
           ++ str "." ++ fnl () ++ fnl ()
       | "INDUCTIVE" ->
 	  let mind = Global.mind_of_delta_kn kn in
@@ -670,11 +635,12 @@ let print_opaque_name qid =
 let print_about_any loc k =
   match k with
   | Term ref ->
+    let rb = Reductionops.ReductionBehaviour.print ref in
     Dumpglob.add_glob loc ref;
       pr_infos_list
        (print_ref false ref :: blankline ::
 	print_name_infos ref @
-	print_simpl_behaviour ref @
+	(if Pp.ismt rb then [] else [rb]) @
 	print_opacity ref @
 	[hov 0 (str "Expands to: " ++ pr_located_qualid k)])
   | Syntactic kn ->

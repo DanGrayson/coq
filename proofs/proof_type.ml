@@ -14,7 +14,6 @@ open Context
 open Tacexpr
 open Glob_term
 open Nametab
-open Pattern
 open Misctypes
 (*i*)
 
@@ -55,6 +54,6 @@ type ltac_call_kind =
   | LtacVarCall of Id.t * glob_tactic_expr
   | LtacConstrInterp of glob_constr * Pretyping.ltac_var_map
 
-type ltac_trace = (int * Loc.t * ltac_call_kind) list
+type ltac_trace = (Loc.t * ltac_call_kind) list
 
 let (ltac_trace_info : ltac_trace Exninfo.t) = Exninfo.make ()

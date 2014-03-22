@@ -24,7 +24,7 @@ open Term
    about a specific name.*)
 
 (* aliased type for clarity purpose*)
-type entry =  (constr, types) kind_of_term
+type entry = Constr.t
 
 (* the following types correspond to the different "things"
    the kernel can learn about. These are the fields of the proactive knowledge*)
@@ -100,8 +100,13 @@ type proactive = entry Proactive.t
    a finite type describing the fields to the field of proactive retroknowledge
    (and then to make as many functions as needed in environ.ml) *)
 
-module Reactive =
-  Map.Make (struct type t = entry let compare = compare end)
+module EntryOrd =
+struct
+  type t = entry
+  let compare = Constr.compare
+end
+
+module Reactive = Map.Make (EntryOrd)
 
 type reactive_end = {(*information required by the compiler of the VM *)
   vm_compiling :

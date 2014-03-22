@@ -14,7 +14,9 @@
 ###########################################################################
 
 # build the different subsystems: coq, coqide
-world: revision coq coqide
+world: revision coq coqide documentation
+
+.PHONY: world
 
 ###########################################################################
 # Includes
@@ -23,40 +25,36 @@ world: revision coq coqide
 include Makefile.common
 include Makefile.doc
 
-ifeq ($(LOCAL),true)
-install:
-	@echo "Nothing to install in a local build!"
+MLFILES := $(MLSTATICFILES) $(GENMLFILES) $(ML4FILES:.ml4=.ml)
+
+# In a first phase (when BUILDGRAMMAR=1), we restrict the considered
+# files to some specific directories (up to grammar/), not considering
+# the grammar-dependent .ml4 (which are in tactics/ toplevel/ plugins/)
+
+GRAMONLY := $(addsuffix /%,$(GRAMSRCDIRS))
+
+ifdef BUILDGRAMMAR
+ CURSRCDIRS := $(GRAMSRCDIRS)
+ CURFILES := \
+  $(filter $(GRAMONLY), $(MLFILES) $(MLIFILES) $(ML4FILES)) grammar/grammar.mllib
 else
-install: install-coq install-coqide install-doc-$(WITHDOC)
+ CURSRCDIRS := $(SRCDIRS)
+ CURFILES := $(MLFILES) $(MLIFILES) $(ML4FILES) $(MLLIBFILES) $(CFILES) $(VFILES)
 endif
 
-install-doc-all: install-doc
-install-doc-no:
-
-world: doc-$(WITHDOC)
-doc-all: doc
-doc-no:
-
-.PHONY: world install install-doc-all install-doc-no doc-all doc-no
+CURDEPS:=$(addsuffix .d, $(CURFILES))
 
 # All dependency includes must be declared secondary, otherwise make will
 # delete them if it decided to build them by dependency instead of because
 # of include, and they will then be automatically deleted, leading to an
 # infinite loop.
 
-MLFILES:=$(MLSTATICFILES) $(MLEXTRAFILES)
+.SECONDARY: $(CURDEPS) $(GENFILES) $(ML4FILES:.ml4=.ml)
 
-ALLDEPS:=$(addsuffix .d, \
-  $(ML4FILES) $(MLFILES) $(MLIFILES) $(CFILES) $(MLLIBFILES) $(VFILES))
+# This include below will lauch the build of all concerned .d.
+# The - at front is for disabling warnings about currently missing ones.
 
-.SECONDARY: $(ALLDEPS) $(GENFILES) $(ML4FILES:.ml4=.ml)
-
-# NOTA: the -include below will lauch the build of all .d. Some of them
-# will _fail_ at first, this is to be expected (no grammar.cma initially).
-# These errors (see below "not ready yet") do not discourage make to
-# try again and finally succeed.
-
--include $(ALLDEPS)
+-include $(CURDEPS)
 
 
 ###########################################################################
@@ -100,7 +98,7 @@ BOOTCOQC=$(TIMER) $(COQTOPEXE) -boot $(COQOPTS) -compile
 SHOW := $(if $(VERBOSE),@true "",@echo "")
 HIDE := $(if $(VERBOSE),,@)
 
-LOCALINCLUDES=$(addprefix -I , $(SRCDIRS) )
+LOCALINCLUDES := $(addprefix -I , $(CURSRCDIRS) )
 MLINCLUDES=$(LOCALINCLUDES) -I $(MYCAMLP4LIB)
 
 OCAMLC := $(OCAMLC) $(CAMLFLAGS)
@@ -108,7 +106,7 @@ OCAMLOPT := $(OCAMLOPT) $(CAMLFLAGS)
 
 BYTEFLAGS=$(CAMLDEBUG) $(USERFLAGS)
 OPTFLAGS=$(CAMLDEBUGOPT) $(CAMLTIMEPROF) $(USERFLAGS)
-DEPFLAGS= $(LOCALINCLUDES)
+DEPFLAGS= $(LOCALINCLUDES) -I ide -I ide/utils
 
 define bestocaml
 $(if $(OPT),\
@@ -205,11 +203,11 @@ kernel/copcodes.ml: kernel/byterun/coq_instruct.h
 
 .PHONY: coqbinaries coq coqlib coqlight states
 
-coqbinaries:: ${COQBINARIES} ${CSDPCERT} ${FAKEIDE}
+coqbinaries: ${COQBINARIES} ${CSDPCERT} ${FAKEIDE}
 
 coq: coqlib tools coqbinaries
 
-coqlib:: theories plugins
+coqlib: theories plugins
 
 coqlight: theories-light tools coqbinaries
 
@@ -300,7 +298,7 @@ plugins/micromega/csdpcert$(EXE): $(CSDPCERTCMO:.cmo=$(BESTOBJ))
 .PHONY: coqide coqide-binaries coqide-no coqide-byte coqide-opt coqide-files
 
 # target to build CoqIde
-coqide:: coqide-files coqide-binaries theories/Init/Prelude.vo
+coqide: coqide-files coqide-binaries theories/Init/Prelude.vo
 
 COQIDEFLAGS=$(addprefix -I , $(IDESRCDIRS)) $(COQIDEINCLUDES)
 
@@ -315,26 +313,24 @@ coqide-opt:  $(COQIDEBYTE) $(COQIDE)
 coqide-files: $(IDEFILES)
 
 ifeq ($(HASCOQIDE),opt)
-$(COQIDE): $(LINKIDEOPT) | $(COQTOPEXE)
+$(COQIDE): $(LINKIDEOPT)
 	$(SHOW)'OCAMLOPT -o $@'
-	$(HIDE)$(OCAMLOPT) $(COQIDEFLAGS) $(OPTFLAGS) -o $@ unix.cmxa \
-		lablgtk.cmxa lablgtksourceview2.cmxa $(IDEOPTFLAGS) \
-		str.cmxa $(LINKIDEOPT)
+	$(HIDE)$(OCAMLOPT) $(COQIDEFLAGS) $(OPTFLAGS) -o $@ unix.cmxa lablgtk.cmxa \
+		lablgtksourceview2.cmxa str.cmxa $(IDEFLAGS:.cma=.cmxa) $^
 	$(STRIP) $@
 else
 $(COQIDE): $(COQIDEBYTE)
 	cp $< $@
 endif
 
-$(COQIDEBYTE): $(LINKIDE) | $(COQTOPBYTE)
+$(COQIDEBYTE): $(LINKIDE)
 	$(SHOW)'OCAMLC -o $@'
 	$(HIDE)$(OCAMLC) $(COQIDEFLAGS) $(BYTEFLAGS) -o $@ unix.cma lablgtk.cma \
-	        lablgtksourceview2.cma str.cma $(LINKIDE)
+	        lablgtksourceview2.cma str.cma $(IDEFLAGS) $^
 
 # install targets
 
-.PHONY: install-coqide install-ide-no install-ide-byte install-ide-opt
-.PHONY: install-ide-files install-ide-info install-im install-ide-devfiles
+.PHONY: install-coqide install-ide-bin install-ide-files install-ide-info install-ide-devfiles
 
 ifeq ($(HASCOQIDE),no)
 install-coqide:
@@ -358,7 +354,7 @@ install-ide-files:
 	$(MKDIR) $(FULLDATADIR)
 	$(INSTALLLIB) ide/coq.png ide/coq.lang ide/coq_style.xml $(FULLDATADIR)
 	$(MKDIR) $(FULLCONFIGDIR)
-	if [ $(IDEOPTINT) = QUARTZ ] ; then $(INSTALLLIB) ide/mac_default_accel_map $(FULLCONFIGDIR)/coqide.keys ; fi
+	if [ $(IDEINT) = QUARTZ ] ; then $(INSTALLLIB) ide/mac_default_accel_map $(FULLCONFIGDIR)/coqide.keys ; fi
 
 install-ide-info:
 	$(MKDIR) $(FULLDOCDIR)
@@ -387,7 +383,7 @@ $(ALLSTDLIB).v:
 
 MAKE_TSOPTS=-C test-suite -s VERBOSE=$(VERBOSE)
 
-check:: validate test-suite
+check: validate test-suite
 
 test-suite: world $(ALLSTDLIB).v
 	$(MAKE) $(MAKE_TSOPTS) clean
@@ -495,7 +491,7 @@ theories/Numbers/Natural/BigN/NMake_gen.v: theories/Numbers/Natural/BigN/NMake_g
 
 printers: $(DEBUGPRINTERS)
 
-tools:: $(TOOLS) $(DEBUGPRINTERS) $(COQDEPBOOT)
+tools: $(TOOLS) $(DEBUGPRINTERS) $(COQDEPBOOT)
 
 # coqdep_boot : a basic version of coqdep, with almost no dependencies.
 
@@ -541,7 +537,7 @@ $(COQDOC): $(patsubst %.cma,%$(BESTLIB),$(COQDOCCMO:.cmo=$(BESTOBJ)))
 # fake_ide : for debugging or test-suite purpose, a fake ide simulating
 # a connection to coqtop -ideslave
 
-$(FAKEIDE): lib/clib$(BESTLIB) lib/xml_lexer$(BESTOBJ) lib/xml_parser$(BESTOBJ) lib/xml_printer$(BESTOBJ) ide/document$(BESTOBJ) tools/fake_ide$(BESTOBJ)
+$(FAKEIDE): lib/clib$(BESTLIB) lib/xml_lexer$(BESTOBJ) lib/xml_parser$(BESTOBJ) lib/xml_printer$(BESTOBJ) lib/errors$(BESTOBJ) lib/spawn$(BESTOBJ) ide/document$(BESTOBJ) tools/fake_ide$(BESTOBJ)
 	$(SHOW)'OCAMLBEST -o $@'
 	$(HIDE)$(call bestocaml,-I ide,str unix)
 
@@ -566,8 +562,30 @@ tools/compat5b.cmo: tools/compat5b.ml
 endif
 
 ###########################################################################
+# Documentation : cf Makefile.doc
+###########################################################################
+
+documentation: doc-$(WITHDOC)
+doc-all: doc
+doc-no:
+
+.PHONY: documentation doc-all doc-no
+
+###########################################################################
 # Installation
 ###########################################################################
+
+ifeq ($(LOCAL),true)
+install:
+	@echo "Nothing to install in a local build!"
+else
+install: install-coq install-coqide install-doc-$(WITHDOC)
+endif
+
+install-doc-all: install-doc
+install-doc-no:
+
+.PHONY: install install-doc-all install-doc-no
 
 #These variables are intended to be set by the caller to make
 #COQINSTALLPREFIX=
@@ -607,7 +625,7 @@ install-binaries: install-tools
 	$(MKDIR) $(FULLBINDIR)
 	$(INSTALLBIN) $(COQC) $(COQTOPBYTE) $(COQTOPEXE) $(CHICKEN) $(FULLBINDIR)
 
-install-tools::
+install-tools:
 	$(MKDIR) $(FULLBINDIR)
 	# recopie des fichiers de style pour coqide
 	$(MKDIR) $(FULLCOQLIB)/tools/coqdoc
@@ -655,7 +673,11 @@ install-library-light:
 	$(INSTALLSH) $(FULLCOQLIB) $(LIBFILESLIGHT) $(INITPLUGINS)
 	rm -f $(FULLCOQLIB)/revision
 	-$(INSTALLLIB) revision $(FULLCOQLIB)
+ifndef CUSTOM
+	$(INSTALLLIB) $(DLLCOQRUN) $(FULLCOQLIB)
+endif
 ifeq ($(BEST),opt)
+	$(INSTALLLIB) $(LIBCOQRUN) $(FULLCOQLIB)
 	$(INSTALLSH)  $(FULLCOQLIB) $(INITPLUGINSOPT)
 endif
 
@@ -685,18 +707,18 @@ install-latex:
 
 source-doc: mli-doc $(OCAMLDOCDIR)/coq.pdf
 
-$(OCAMLDOCDIR)/coq.tex:: $(DOCMLIS:.mli=.cmi)
+$(OCAMLDOCDIR)/coq.tex: $(DOCMLIS:.mli=.cmi)
 	$(OCAMLDOC) -latex -rectypes -I $(MYCAMLP4LIB) $(MLINCLUDES)\
 	$(DOCMLIS) -t "Coq mlis documentation" \
 	-intro $(OCAMLDOCDIR)/docintro -o $@
 
-mli-doc:: $(DOCMLIS:.mli=.cmi)
+mli-doc: $(DOCMLIS:.mli=.cmi)
 	$(OCAMLDOC) -html -rectypes -I $(MYCAMLP4LIB) $(MLINCLUDES)\
 	$(DOCMLIS) -d $(OCAMLDOCDIR)/html -colorize-code \
 	-t "Coq mlis documentation" -intro $(OCAMLDOCDIR)/docintro \
 	-css-style style.css
 
-ml-dot:: $(MLEXTRAFILES)
+ml-dot: $(MLFILES)
 	$(OCAMLDOC) -dot -dot-reduce -rectypes -I $(CAMLLIB) -I $(MYCAMLP4LIB) $(MLINCLUDES)\
 	$(filter $(addsuffix /%.ml,$(CORESRCDIRS)),$(MLFILES)) -o $(OCAMLDOCDIR)/coq.dot
 
@@ -750,13 +772,9 @@ grammar/grammar.cma: | grammar/grammar.mllib.d
 	$(SHOW)'OCAMLC -a $@'   
 	$(HIDE)$(OCAMLC) $(MLINCLUDES) $(BYTEFLAGS) $^ -linkall -a -o $@
 
-ide/coqide_main.ml: ide/coqide_main.ml4
+ide/coqide_main.ml: ide/coqide_main.ml4 config/Makefile # no camlp4deps here
 	$(SHOW)'CAMLP4O   $<'
 	$(HIDE)$(CAMLP4O) $(PR_O) $(CAMLP4USE) -D$(IDEINT) -impl $< -o $@
-
-ide/coqide_main_opt.ml: ide/coqide_main.ml4 config/Makefile # no camlp4deps here
-	$(SHOW)'CAMLP4O   $<'
-	$(HIDE)$(CAMLP4O) $(PR_O) $(CAMLP4USE) -D$(IDEOPTINT) -impl $< -o $@
 
 # pretty printing of the revision number when compiling a checked out
 # source tree
@@ -890,11 +908,8 @@ plugins/%_mod.ml: plugins/%.mllib
 
 %.ml: %.ml4 | %.ml4.d tools/compat5.cmo tools/compat5b.cmo
 	$(SHOW)'CAMLP4O   $<'
-	$(HIDE)\
-	DEPS="$(call CAMLP4DEPS,$<)"; \
-	if ls $${DEPS} > /dev/null 2>&1; then \
-	$(CAMLP4O) $(PR_O) -I $(CAMLLIB) tools/compat5.cmo $${DEPS} $(CAMLP4USE) $(CAMLP4COMPAT) -impl $< -o $@; \
-	else echo $< : Dependency $${DEPS} not ready yet; false; fi
+	$(HIDE)$(CAMLP4O) $(PR_O) -I $(CAMLLIB) tools/compat5.cmo \
+	  $(call CAMLP4DEPS,$<) $(CAMLP4USE) $(CAMLP4COMPAT) -impl $< -o $@
 
 %.vo %.glob: %.v theories/Init/Prelude.vo $(VO_TOOLS_DEP) | %.v.d
 	$(SHOW)'COQC      $<'
@@ -917,10 +932,10 @@ endif
 	$(SHOW)'CAMLP4DEPS $<'
 	$(HIDE)echo "$*.ml: $(if $(NO_RECOMPILE_ML4),$(ORDER_ONLY_SEP)) $(call CAMLP4DEPS,$<)" $(TOTARGET)
 
-# We now use coqdep_boot to wrap around ocamldep -modules, since it is aware
-# of .ml4 files
+# Since OCaml 3.12.1, we could use again ocamldep directly, thanks to
+# the option -ml-synonym
 
-OCAMLDEP_NG = $(COQDEPBOOT) -mldep $(OCAMLDEP)
+OCAMLDEP_NG = $(OCAMLDEP) -slash -ml-synonym .ml4
 
 checker/%.ml.d: $(D_DEPEND_BEFORE_SRC) checker/%.ml $(D_DEPEND_AFTER_SRC) $(COQDEPBOOT) $(GENFILES)
 	$(SHOW)'OCAMLDEP  $<'
@@ -971,6 +986,10 @@ otags:
 
 
 ###########################################################################
+
+# To speed-up things a bit, let's dissuade make to attempt rebuilding makefiles
+
+Makefile Makefile.build Makefile.common config/Makefile : ;
 
 
 # For emacs: 

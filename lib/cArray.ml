@@ -6,35 +6,7 @@
 (*         *       GNU Lesser General Public License Version 2.1       *)
 (***********************************************************************)
 
-module type S =
-sig
-  external length : 'a array -> int = "%array_length"
-  external get : 'a array -> int -> 'a = "%array_safe_get"
-  external set : 'a array -> int -> 'a -> unit = "%array_safe_set"
-  external make : int -> 'a -> 'a array = "caml_make_vect"
-  val init : int -> (int -> 'a) -> 'a array
-  val make_matrix : int -> int -> 'a -> 'a array array
-  val create_matrix : int -> int -> 'a -> 'a array array
-  val append : 'a array -> 'a array -> 'a array
-  val concat : 'a array list -> 'a array
-  val sub : 'a array -> int -> int -> 'a array
-  val copy : 'a array -> 'a array
-  val fill : 'a array -> int -> int -> 'a -> unit
-  val blit : 'a array -> int -> 'a array -> int -> int -> unit
-  val to_list : 'a array -> 'a list
-  val of_list : 'a list -> 'a array
-  val iter : ('a -> unit) -> 'a array -> unit
-  val map : ('a -> 'b) -> 'a array -> 'b array
-  val iteri : (int -> 'a -> unit) -> 'a array -> unit
-  val mapi : (int -> 'a -> 'b) -> 'a array -> 'b array
-  val fold_left : ('a -> 'b -> 'a) -> 'a -> 'b array -> 'a
-  val fold_right : ('b -> 'a -> 'a) -> 'b array -> 'a -> 'a
-  val sort : ('a -> 'a -> int) -> 'a array -> unit
-  val stable_sort : ('a -> 'a -> int) -> 'a array -> unit
-  val fast_sort : ('a -> 'a -> int) -> 'a array -> unit
-  external unsafe_get : 'a array -> int -> 'a = "%array_unsafe_get"
-  external unsafe_set : 'a array -> int -> 'a -> unit = "%array_unsafe_set"
-end
+module type S = module type of Array
 
 module type ExtS =
 sig
@@ -72,6 +44,7 @@ sig
   val map_of_list : ('a -> 'b) -> 'a list -> 'b array
   val chop : int -> 'a array -> 'a array * 'a array
   val smartmap : ('a -> 'a) -> 'a array -> 'a array
+  val smartfoldmap : ('r -> 'a -> 'r * 'a) -> 'r -> 'a array -> 'r * 'a array
   val map2 : ('a -> 'b -> 'c) -> 'a array -> 'b array -> 'c array
   val map2_i : (int -> 'a -> 'b -> 'c) -> 'a array -> 'b array -> 'c array
   val map3 :
@@ -320,33 +293,71 @@ let chop n v =
   if n > vlen then failwith "Array.chop";
   (Array.sub v 0 n, Array.sub v n (vlen-n))
 
-(** We don't have local polymorphic exceptions, so we uglily use Objs.*)
-exception Local of int * Obj.t
-
 (* If none of the elements is changed by f we return ar itself.
-   The for loop looks for the first such an element.
-   If found, we return it through the exception and the new array is produced,
+   The while loop looks for the first such an element.
+   If found, we break here and the new array is produced,
    but f is not re-applied to elements that are already checked *)
-let smartmap f ar =
+let smartmap f (ar : 'a array) =
   let len = Array.length ar in
-  try
-    for i = 0 to len - 1 do
-      let a = uget ar i in
-      let a' = f a in
-      if a != a' then (* pointer (in)equality *)
-        raise (Local (i, Obj.repr a'))
-    done;
-    ar
-  with Local (i, v) ->
-    (** FIXME: use Array.unsafe_blit from OCAML 4.00 *)
-    let ans : 'a array = Array.make len (uget ar 0) in
-    let () = Array.blit ar 0 ans 0 i in
-    let () = Array.unsafe_set ans i (Obj.obj v) in
-    for j = succ i to pred len do
-      let w = f (uget ar j) in
-      Array.unsafe_set ans j w
+  let i = ref 0 in
+  let break = ref true in
+  let temp = ref None in
+  while !break && (!i < len) do
+    let v = Array.unsafe_get ar !i in
+    let v' = f v in
+    if v == v' then incr i
+    else begin
+      break := false;
+      temp := Some v';
+    end
+  done;
+  if !i < len then begin
+    (** The array is not the same as the original one *)
+    let ans : 'a array = Array.copy ar in
+    let v = match !temp with None -> assert false | Some x -> x in
+    Array.unsafe_set ans !i v;
+    incr i;
+    while !i < len do
+      let v = Array.unsafe_get ar !i in
+      let v' = f v in
+      if v != v' then Array.unsafe_set ans !i v';
+      incr i
     done;
     ans
+  end else ar
+
+(** Same as [smartmap] but threads a state meanwhile *)
+let smartfoldmap f accu (ar : 'a array) =
+  let len = Array.length ar in
+  let i = ref 0 in
+  let break = ref true in
+  let r = ref accu in
+  (** This variable is never accessed unset *)
+  let temp = ref None in
+  while !break && (!i < len) do
+    let v = Array.unsafe_get ar !i in
+    let (accu, v') = f !r v in
+    r := accu;
+    if v == v' then incr i
+    else begin
+      break := false;
+      temp := Some v';
+    end
+  done;
+  if !i < len then begin
+    let ans : 'a array = Array.copy ar in
+    let v = match !temp with None -> assert false | Some x -> x in
+    Array.unsafe_set ans !i v;
+    incr i;
+    while !i < len do
+      let v = Array.unsafe_get ar !i in
+      let (accu, v') = f !r v in
+      r := accu;
+      if v != v' then Array.unsafe_set ans !i v';
+      incr i
+    done;
+    !r, ans
+  end else !r, ar
 
 let map2 f v1 v2 =
   let len1 = Array.length v1 in
@@ -469,28 +480,34 @@ struct
     done;
     ans
 
-  exception Local of int * Obj.t
-
-  let smartmap f arg v =
-    let len = Array.length v in
-    try
-      for i = 0 to len - 1 do
-        let x = uget v i in
-        let y = f arg x in
-        if x != y then (* pointer (in)equality *)
-          raise (Local (i, Obj.repr y))
-      done;
-      v
-    with Local (i, x) ->
-      (** FIXME: use Array.unsafe_blit from OCAML 4.00 *)
-      let ans : 'a array = Array.make len (uget v 0) in
-      let () = Array.blit v 0 ans 0 i in
-      let () = Array.unsafe_set ans i (Obj.obj x) in
-      for j = succ i to pred len do
-        let y = f arg (uget v j) in
-        Array.unsafe_set ans j y
+  let smartmap f arg (ar : 'a array) =
+    let len = Array.length ar in
+    let i = ref 0 in
+    let break = ref true in
+    let temp = ref None in
+    while !break && (!i < len) do
+      let v = Array.unsafe_get ar !i in
+      let v' = f arg v in
+      if v == v' then incr i
+      else begin
+        break := false;
+        temp := Some v';
+      end
+    done;
+    if !i < len then begin
+      (** The array is not the same as the original one *)
+      let ans : 'a array = Array.copy ar in
+      let v = match !temp with None -> assert false | Some x -> x in
+      Array.unsafe_set ans !i v;
+      incr i;
+      while !i < len do
+        let v = Array.unsafe_get ar !i in
+        let v' = f arg v in
+        if v != v' then Array.unsafe_set ans !i v';
+        incr i
       done;
       ans
+    end else ar
 
   let iter f arg v =
     let len = Array.length v in

@@ -9,7 +9,6 @@
 open Pp
 open Bigint
 open Names
-open Nametab
 open Libnames
 open Globnames
 open Constrexpr
@@ -140,10 +139,6 @@ val level_of_notation : notation -> level (** raise [Not_found] if no level *)
 
 val interp_notation_as_global_reference : Loc.t -> (global_reference -> bool) ->
       notation -> delimiters option -> global_reference
-
-(** Checks for already existing notations *)
-val exists_notation_in_scope : scope_name option -> notation ->
-      interpretation -> bool
 
 (** Declares and looks for scopes associated to arguments of a global ref *)
 val declare_arguments_scope :

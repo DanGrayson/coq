@@ -77,13 +77,13 @@ EXISTINGMLI := $(call find, '*.mli')
 ## Files that will be generated
 
 GENML4FILES:= $(ML4FILES:.ml4=.ml)
-GENMLFILES:=$(LEXFILES:.mll=.ml) $(YACCFILES:.mly=.ml) \
-  tools/tolink.ml kernel/copcodes.ml
 GENMLIFILES:=$(YACCFILES:.mly=.mli)
 GENPLUGINSMOD:=$(filter plugins/%,$(MLLIBFILES:%.mllib=%_mod.ml))
+export GENMLFILES:=$(LEXFILES:.mll=.ml) $(YACCFILES:.mly=.ml) \
+  tools/tolink.ml kernel/copcodes.ml $(GENPLUGINSMOD)
 export GENHFILES:=kernel/byterun/coq_jumptbl.h
 export GENVFILES:=theories/Numbers/Natural/BigN/NMake_gen.v
-export GENFILES:=$(GENMLFILES) $(GENMLIFILES) $(GENHFILES) $(GENVFILES) $(GENPLUGINSMOD)
+export GENFILES:=$(GENMLFILES) $(GENMLIFILES) $(GENHFILES) $(GENVFILES)
 
 # NB: all files in $(GENFILES) can be created initially, while
 # .ml files in $(GENML4FILES) might need some intermediate building.
@@ -95,8 +95,7 @@ define diff
  $(strip $(foreach f, $(1), $(if $(filter $(f),$(2)),,$f)))
 endef
 
-export MLEXTRAFILES := $(GENMLFILES) $(GENML4FILES) $(GENPLUGINSMOD)
-export MLSTATICFILES := $(call diff, $(EXISTINGML), $(MLEXTRAFILES))
+export MLSTATICFILES := $(call diff, $(EXISTINGML), $(GENMLFILES) $(GENML4FILES))
 export MLIFILES := $(sort $(GENMLIFILES) $(EXISTINGMLI))
 
 include Makefile.common
@@ -107,7 +106,7 @@ include Makefile.common
 
 NOARG: world
 
-.PHONY: NOARG help always
+.PHONY: NOARG help noconfig submake
 
 help:
 	@echo "Please use either"
@@ -131,17 +130,27 @@ endif
 
 # Apart from clean and tags, everything will be done in a sub-call to make
 # on Makefile.build. This way, we avoid doing here the -include of .d :
-# since they trigger some compilations, we do not want them for a mere clean
+# since they trigger some compilations, we do not want them for a mere clean.
+# Moreover, we regroup this sub-call in a common target named 'submake'.
+# This way, multiple user-given goals (cf the MAKECMDGOALS variable) won't
+# trigger multiple (possibly parallel) make sub-calls
 
 ifdef COQ_CONFIGURED
-%:: always
-	$(MAKE) --warn-undefined-variable --no-builtin-rules -f Makefile.build "$@"
+%:: submake ;
 else
-%:: always
-	@echo "Please run ./configure first" >&2; exit 1
+%:: noconfig ;
 endif
 
-always : ;
+MAKE_OPTS := --warn-undefined-variable --no-builtin-rules
+
+GRAM_TARGETS := grammar/grammar.cma grammar/q_constr.cmo
+
+submake:
+	$(MAKE) $(MAKE_OPTS) -f Makefile.build BUILDGRAMMAR=1 $(GRAM_TARGETS)
+	$(MAKE) $(MAKE_OPTS) -f Makefile.build $(MAKECMDGOALS)
+
+noconfig:
+	@echo "Please run ./configure first" >&2; exit 1
 
 # To speed-up things a bit, let's dissuade make to attempt rebuilding makefiles
 
@@ -165,7 +174,7 @@ cruftclean: ml4clean
 
 indepclean:
 	rm -f $(GENFILES)
-	rm -f $(COQTOPBYTE) $(CHICKENBYTE) bin/fake_ide
+	rm -f $(COQTOPBYTE) $(CHICKENBYTE) $(FAKEIDE)
 	find . \( -name '*~' -o -name '*.cm[ioat]' -o -name '*.cmti' \) -delete
 	rm -f */*.pp[iox] plugins/*/*.pp[iox]
 	rm -rf $(SOURCEDOCDIR)
@@ -216,13 +225,16 @@ ml4depclean:
 depclean:
 	find . $(FIND_VCS_CLAUSE) '(' -name '*.d' ')' -print | xargs rm -f
 
+cacheclean:
+	find theories plugins test-suite -name '.*.aux' -delete
+
 cleanconfig:
 	rm -f config/Makefile config/coq_config.ml myocamlbuild_config.ml dev/ocamldebug-v7
 
-distclean: clean cleanconfig
+distclean: clean cleanconfig cacheclean
 
 voclean:
-	find theories plugins test-suite \( -name '*.vo' -o -name '*.glob' -o -name "*.cmxs" -o -name "*.native" -o -name "*.cmx" -o -name "*.cmi" -o -name "*.o" -o -name '.*.aux' \) -delete
+	find theories plugins test-suite \( -name '*.vo' -o -name '*.glob' -o -name "*.cmxs" -o -name "*.native" -o -name "*.cmx" -o -name "*.cmi" -o -name "*.o" \) -delete
 
 devdocclean:
 	find . -name '*.dep.ps' -o -name '*.dot' | xargs rm -f
@@ -234,7 +246,7 @@ devdocclean:
 # Emacs tags
 ###########################################################################
 
-.PHONY: tags
+.PHONY: tags printenv
 
 tags:
 	echo $(MLIFILES) $(MLSTATICFILES) $(ML4FILES) | sort -r | xargs \

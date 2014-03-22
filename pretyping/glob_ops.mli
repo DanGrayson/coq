@@ -6,19 +6,14 @@
 (*         *       GNU Lesser General Public License Version 2.1        *)
 (************************************************************************)
 
-open Pp
 open Names
-open Context
-open Term
-open Libnames
-open Nametab
-open Decl_kinds
-open Misctypes
-open Locus
 open Glob_term
 
 (** Equalities *)
-val glob_sort_eq : glob_sort -> glob_sort -> bool
+
+val cases_pattern_eq : cases_pattern -> cases_pattern -> bool
+
+val glob_constr_eq : glob_constr -> glob_constr -> bool
 
 (** Operations on [glob_constr] *)
 

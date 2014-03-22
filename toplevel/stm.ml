@@ -409,22 +409,24 @@ end = struct (* {{{ *)
         | _ -> anomaly(str("Cannot slice from "^ Stateid.to_string start ^
                            " to "^Stateid.to_string stop))
       in aux start in
+    let copy_info v id =
+      Vcs_.set_info v id
+        { (get_info id) with state = None; vcs_backup = None,None } in
+    let copy_info_w_state v id =
+      Vcs_.set_info v id { (get_info id) with vcs_backup = None,None } in
     let v = Vcs_.empty stop in
-    let info = get_info stop in
-    (* Stm should have reached the beginning of proof *)
-    assert (not (Option.is_empty info.state));
-    (* This may be expensive *)
-    let info = { info with vcs_backup = None, None } in
-    let v = Vcs_.set_info v stop info in
-    List.fold_right (fun (id,tr) v ->
+    let v = copy_info v stop in
+    let v = List.fold_right (fun (id,tr) v ->
       let v = Vcs_.commit v id tr in
-      let info = get_info id in
-      (* TODO: we could drop all of them but for the last one and purify it,
-       * so that proofs partially executed in the main process are not
-       * completely re-executed in the slave process *)
-      let info = { info with state = None; vcs_backup = None,None } in
-      let v = Vcs_.set_info v id info in
-      v) l v
+      let v = copy_info v id in
+      v) l v in
+    (* Stm should have reached the beginning of proof *)
+    assert (not (Option.is_empty (get_info stop).state));
+    (* We put in the new dag the most recent state known to master *)
+    let rec fill id =
+      if (get_info id).state = None then fill (Vcs_aux.visit v id).next
+      else copy_info_w_state v id in
+    fill start
 
   let create_cluster l ~tip = vcs := create_cluster !vcs l tip
   let cluster_of id = Option.map Dag.Cluster.data (cluster_of !vcs id)
@@ -502,8 +504,8 @@ module State : sig
   val install_cached : Stateid.t -> unit
   val is_cached : Stateid.t -> bool
 
-  val exn_on : Stateid.t -> ?valid:Stateid.t -> exn -> exn
 
+  val exn_on : Stateid.t -> ?valid:Stateid.t -> exn -> exn
   (* to send states across worker/master *)
   type frozen_state
   val get_cached : Stateid.t -> frozen_state
@@ -572,7 +574,7 @@ end = struct (* {{{ *)
       anomaly (str"defining state "++str str_id++str" twice");
     try
       prerr_endline("defining "^str_id^" (cache="^
-        if cache = `Yes then "Y" else if cache = `Shallow then "S" else "N");
+        if cache = `Yes then "Y)" else if cache = `Shallow then "S)" else "N)");
       f ();
       if cache = `Yes then freeze `No id
       else if cache = `Shallow then freeze `Shallow id;
@@ -595,12 +597,17 @@ end
 (* }}} *)
 
 let hints = ref Aux_file.empty_aux_file
-let set_compilation_hints h = hints := h
+let set_compilation_hints file =
+  hints := Aux_file.load_aux_file_for file
 let get_hint_ctx loc =
   let s = Aux_file.get !hints loc "context_used" in
   let ids = List.map Names.Id.of_string (Str.split (Str.regexp " ") s) in
   let ids = List.map (fun id -> Loc.ghost, id) ids in
   SsExpr (SsSet ids)
+
+let get_hint_bp_time proof_name =
+  try float_of_string (Aux_file.get !hints Loc.ghost proof_name)
+  with Not_found -> 1.0
 
 module Worker = Spawn.Sync(struct 
   let add_timeout ~sec f =
@@ -611,6 +618,16 @@ module Worker = Spawn.Sync(struct
       done)
     ())
 end)
+
+module WorkersPool = WorkerPool.Make(Worker)
+
+let record_pb_time proof_name loc time =
+  let proof_build_time = Printf.sprintf "%.3f" time in
+  Aux_file.record_in_aux_at loc "proof_build_time" proof_build_time;
+  if proof_name <> "" then begin
+    Aux_file.record_in_aux_at Loc.ghost proof_name proof_build_time;
+    hints := Aux_file.set !hints Loc.ghost proof_name proof_build_time
+  end
 
 (* Slave processes (if initialized, otherwise local lazy evaluation) *)
 module Slaves : sig
@@ -635,141 +652,34 @@ module Slaves : sig
     (?redefine_qed:bool -> cache:Summary.marshallable -> Stateid.t -> unit) -> unit
 
   type tasks
-  val dump : unit -> tasks
+  val dump : (Future.UUID.t * int) list -> tasks
   val check_task : string -> tasks -> int -> bool
   val info_tasks : tasks -> (string * float * int) list
+  val finish_task :
+    string ->
+    Library.seg_univ -> Library.seg_discharge -> Library.seg_proofs ->
+    tasks -> int -> Library.seg_univ
 
   val cancel_worker : int -> unit
 
+  val set_perspective : Stateid.t list -> unit
+
 end = struct (* {{{ *)
 
-  module TQueue : sig
 
-    type 'a t
-    val create : unit -> 'a t
-    val pop : 'a t -> 'a
-    val push : 'a t -> 'a -> unit
-    val wait_until_n_are_waiting_and_queue_empty : int -> 'a t -> unit
-    val dump : 'a t -> 'a list
-
-  end = struct (* {{{ *)
-
-                 (* queue, lock, cond_q, n_waiting, cond_n_waiting *)
-    type 'a t = 'a Queue.t * Mutex.t * Condition.t * int ref * Condition.t
-
-    let create () =
-      Queue.create (), Mutex.create (), Condition.create (),
-      ref 0, Condition.create ()
-
-    let pop (q,m,c,n,cn) =
-      Mutex.lock m;
-      while Queue.is_empty q do
-        n := !n+1;
-        Condition.signal cn;
-        Condition.wait c m;
-        n := !n-1
-      done;
-      let x = Queue.pop q in
-      Condition.signal c;
-      Condition.signal cn;
-      Mutex.unlock m;
-      x
-
-    let push (q,m,c,n,cn) x =
-      Mutex.lock m;
-      Queue.push x q;
-      Condition.signal c;
-      Mutex.unlock m
-
-    let wait_until_n_are_waiting_and_queue_empty (j : int) (q,m,c,n,cn) =
-      Mutex.lock m;
-      while not (Queue.is_empty q) || !n < j do Condition.wait cn m done;
-      Mutex.unlock m
-
-    let dump (q,m,_,_,_) =
-      let l = ref [] in
-      Mutex.lock m;
-      while not (Queue.is_empty q) do l := Queue.pop q :: !l done;
-      Mutex.unlock m;
-      List.rev !l
-
-  end (* }}} *)
-
-  module SlavesPool : sig
-  
-    val init : int -> (bool ref -> (unit -> in_channel * out_channel * Worker.process * int) -> unit) -> unit
-    val is_empty : unit -> bool
-    val n_slaves : unit -> int
-
-    val cancel : int -> unit
-  
-  end = struct (* {{{ *)
-  
-    let slave_managers = ref None
-    
-    let n_slaves () = match !slave_managers with
-      | None -> 0
-      | Some managers -> Array.length managers
-    let is_empty () = !slave_managers = None
-
-    let master_handshake worker_id ic oc =
-      try
-        Marshal.to_channel oc 17 [];  flush oc;
-        let n = (Marshal.from_channel ic : int) in
-        assert(n = 17);
-        prerr_endline (Printf.sprintf "Handshake with %d OK" worker_id)
-      with e ->
-        prerr_endline
-          (Printf.sprintf "Handshake with %d failed: %s"
-            worker_id (Printexc.to_string e));
-        exit 1
-
-    let respawn n () =
-      let prog =  Sys.argv.(0) in
-      let rec set_slave_opt = function
-        | [] -> ["-async-proofs"; "worker"; string_of_int n]
-        | ("-ideslave"|"-emacs"|"-emacs-U")::tl -> set_slave_opt tl
-        | ("-async-proofs"
-          |"-compile"
-          |"-compile-verbose")::_::tl -> set_slave_opt tl
-        | x::tl -> x :: set_slave_opt tl in
-      let args =
-        Array.of_list (set_slave_opt (List.tl (Array.to_list Sys.argv))) in
-      let env =
-        Array.append !async_proofs_workers_extra_env (Unix.environment ()) in
-      let proc, ic, oc = Worker.spawn ~env prog args in
-      master_handshake n ic oc;
-      ic, oc, proc, n
-
-    let init n manage_slave =
-      slave_managers := Some
-        (Array.init n (fun x ->
-           let calcel_req = ref false in
-           calcel_req,
-           Thread.create (manage_slave calcel_req) (respawn (x+1))))
-
-    let cancel n =
-      match !slave_managers with
-      | None -> ()
-      | Some a ->
-          let switch, _ = a.(n) in
-          switch := true
-
-  end (* }}} *)
- 
-  let cancel_worker n = SlavesPool.cancel (n-1)
+  let cancel_worker n = WorkersPool.cancel (n-1)
 
   let reach_known_state = ref (fun ?redefine_qed ~cache id -> ())
   let set_reach_known_state f = reach_known_state := f
 
-  type request =
+  type 'a request =
     ReqBuildProof of
-      (Stateid.t * Stateid.t) * Stateid.t * VCS.vcs * Loc.t * string
+      (Stateid.t * Stateid.t) * Stateid.t * VCS.vcs * Loc.t * 'a * string
 
-  let name_of_request (ReqBuildProof (_,_,_,_,s)) = s
+  let name_of_request (ReqBuildProof (_,_,_,_,_,s)) = s
 
   type response =
-    | RespBuiltProof of Entries.proof_output list 
+    | RespBuiltProof of Entries.proof_output list * float
     | RespError of (* err, safe, msg, safe_state *)
         Stateid.t * Stateid.t * std_ppcmds * State.frozen_state option
     | RespFeedback of Interface.feedback
@@ -791,19 +701,19 @@ end = struct (* {{{ *)
   type task =
     | TaskBuildProof of (Stateid.t * Stateid.t) * Stateid.t * Stateid.t *
         (Entries.proof_output list Future.assignement -> unit) * cancel_switch
-        * Loc.t * string
+        * Loc.t * Future.UUID.t * string
   let pr_task = function
-    | TaskBuildProof(_,bop,eop,_,_,_,s) ->
+    | TaskBuildProof(_,bop,eop,_,_,_,_,s) ->
         "TaskBuilProof("^Stateid.to_string bop^","^Stateid.to_string eop^
           ","^s^")"
 
-  let request_of_task task =
+  let request_of_task task : Future.UUID.t request =
     match task with
-    | TaskBuildProof (exn_info,bop,eop,_,_,loc,s) ->
-        ReqBuildProof(exn_info,eop,VCS.slice ~start:eop ~stop:bop,loc,s)
+    | TaskBuildProof (exn_info,bop,eop,_,_,loc,uuid,s) ->
+        ReqBuildProof(exn_info,eop,VCS.slice ~start:eop ~stop:bop,loc,uuid,s)
 
   let cancel_switch_of_task = function
-    | TaskBuildProof (_,_,_,_,c,_,_) -> c
+    | TaskBuildProof (_,_,_,_,c,_,_,_) -> c
 
   let build_proof_here_core loc eop () =
     let wall_clock1 = Unix.gettimeofday () in
@@ -818,26 +728,27 @@ end = struct (* {{{ *)
 
   let slave_respond msg =
     match msg with
-    | ReqBuildProof(exn_info,eop,vcs,loc,_) ->
+    | ReqBuildProof(exn_info,eop,vcs,loc,_,_) ->
         VCS.restore vcs;
         VCS.print ();
-        let r = RespBuiltProof (
+        let rc, time =
+          let wall_clock = Unix.gettimeofday () in
           let l = Future.force (build_proof_here exn_info loc eop) in
           List.iter (fun (_,se) -> Declareops.iter_side_effects (function
             | Declarations.SEsubproof(_,
-               { Declarations.const_body = Declarations.OpaqueDef f;
-                 const_constraints = cst} ) -> 
-                  ignore(Future.join f); ignore(Future.join cst)
+               { Declarations.const_body = Declarations.OpaqueDef f } ) ->
+               Opaqueproof.join_opaque f
             | _ -> ())
           se) l;
-          l) in
+          l, Unix.gettimeofday () -. wall_clock in
         VCS.print ();
-        r
+        RespBuiltProof(rc,time)
 
-  let check_task name l i =
+  let check_task_aux extra name l i =
     match List.nth l i with
-    | ReqBuildProof ((id,valid),eop,vcs,loc,s) ->
-        Pp.msg_info(str(Printf.sprintf "Checking task %d (%s) of %s" i s name));
+    | ReqBuildProof ((id,valid),eop,vcs,loc,_,s) ->
+        Pp.msg_info(
+          str(Printf.sprintf "Checking task %d (%s%s) of %s" i s extra name));
         VCS.restore vcs;
         try
           !reach_known_state ~cache:`No eop;
@@ -848,7 +759,7 @@ end = struct (* {{{ *)
           vernac_interp eop ~proof
             { verbose = false; loc;
               expr = (VernacEndProof (Proved (true,None))) };
-          true
+          Some proof
         with e -> (try
           match Stateid.get e with
           | None ->
@@ -872,10 +783,41 @@ end = struct (* {{{ *)
                     spc () ++ print e)
         with e ->
           Pp.msg_error (str"unable to print error message: " ++
-                        str (Printexc.to_string e))); false
+                        str (Printexc.to_string e))); None
+
+  let finish_task name (u,cst,_) d p l i =
+    let bucket =
+      match List.nth l i with ReqBuildProof (_,_,_,_,bucket,_) -> bucket in
+    match check_task_aux (Printf.sprintf ", bucket %d" bucket) name l i with
+    | None -> exit 1
+    | Some (po,pt) ->
+        let discharge c = List.fold_right Cooking.cook_constr d.(bucket) c in
+        let con =
+          Nametab.locate_constant
+            (Libnames.qualid_of_ident po.Proof_global.id) in
+        let c = Global.lookup_constant con in
+        match c.Declarations.const_body with
+        | Declarations.OpaqueDef lc ->
+            let uc = Option.get (Opaqueproof.get_constraints lc) in
+            let uc =
+              Future.chain ~greedy:true ~pure:true uc Univ.hcons_constraints in
+            let pr = Opaqueproof.get_proof lc in
+            let pr = Future.chain ~greedy:true ~pure:true pr discharge in
+            let pr = Future.chain ~greedy:true ~pure:true pr Constr.hcons in
+            Future.sink pr;
+            let extra = Future.join uc in
+            u.(bucket) <- uc;
+            p.(bucket) <- pr;
+            u, Univ.union_constraints cst extra, false
+        | _ -> assert false
+  
+  let check_task name l i =
+    match check_task_aux "" name l i with
+    | Some _ -> true
+    | None -> false
 
   let info_tasks l =
-    CList.map_i (fun i (ReqBuildProof(_,_,_,loc,s)) ->
+    CList.map_i (fun i (ReqBuildProof(_,_,_,loc,_,s)) ->
       let time1 =
         try float_of_string (Aux_file.get !hints loc "proof_build_time")
         with Not_found -> 0.0 in
@@ -894,13 +836,13 @@ end = struct (* {{{ *)
 
   let marshal_err s = raise (MarshalError s)
 
-  let marshal_request oc (req : request) =
+  let marshal_request oc (req : Future.UUID.t request) =
     try marshal_to_channel oc req
     with Failure s | Invalid_argument s | Sys_error s ->
       marshal_err ("marshal_request: "^s)
 
   let unmarshal_request ic =
-    try (Marshal.from_channel ic : request)
+    try (Marshal.from_channel ic : Future.UUID.t request)
     with Failure s | Invalid_argument s | Sys_error s ->
       marshal_err ("unmarshal_request: "^s)
 
@@ -926,28 +868,41 @@ end = struct (* {{{ *)
 
   let queue : task TQueue.t = TQueue.create ()
 
+  let set_perspective idl =
+    let open Stateid in
+    let p = List.fold_right Set.add idl Set.empty in
+    TQueue.reorder queue (fun task1 task2 ->
+      let TaskBuildProof (_, a1, b1, _, _,_,_,_) = task1 in
+      let TaskBuildProof (_, a2, b2, _, _,_,_,_) = task2 in
+      match Set.mem a1 p || Set.mem b1 p, Set.mem a2 p || Set.mem b2 p with
+      | true, true | false, false -> 0
+      | true, false -> -1
+      | false, true -> 1)
+
   let wait_all_done () =
-    if not (SlavesPool.is_empty ()) then
+    if not (WorkersPool.is_empty ()) then
       TQueue.wait_until_n_are_waiting_and_queue_empty
-        (SlavesPool.n_slaves ()) queue
+        (WorkersPool.n_workers ()) queue
 
   let build_proof ~loc ~exn_info:(id,valid as exn_info) ~start ~stop ~name =
     let cancel_switch = ref false in
-    if SlavesPool.is_empty () then
+    if WorkersPool.is_empty () then
       if !Flags.compilation_mode = Flags.BuildVi then begin
         let force () : Entries.proof_output list Future.assignement =
           try `Val (build_proof_here_core loc stop ()) with e -> `Exn e in
         let f,assign = Future.create_delegate ~force (State.exn_on id ~valid) in
-        TQueue.push queue
-          (TaskBuildProof(exn_info,start,stop,assign,cancel_switch,loc,name));
+        let uuid = Future.uuid f in
+        TQueue.push queue (TaskBuildProof
+          (exn_info,start,stop,assign,cancel_switch,loc,uuid,name));
         f, cancel_switch
       end else
         build_proof_here exn_info loc stop, cancel_switch
     else 
       let f, assign = Future.create_delegate (State.exn_on id ~valid) in
+      let uuid = Future.uuid f in
       Pp.feedback (Interface.InProgress 1);
-      TQueue.push queue
-        (TaskBuildProof(exn_info,start,stop,assign,cancel_switch,loc,name));
+      TQueue.push queue (TaskBuildProof
+        (exn_info,start,stop,assign,cancel_switch,loc,uuid,name));
       f, cancel_switch
 
   exception RemoteException of std_ppcmds
@@ -967,8 +922,20 @@ end = struct (* {{{ *)
           | _ -> assert false in
     Pp.feedback ~state_id:Stateid.initial (Interface.SlaveStatus(id, s))
 
-  let rec manage_slave cancel_user_req respawn =
-    let ic, oc, proc, id_slave = respawn () in
+  let rec manage_slave ~cancel:cancel_user_req id_slave respawn =
+    let ic, oc, proc =
+      let rec set_slave_opt = function
+        | [] -> ["-async-proofs"; "worker"; string_of_int id_slave]
+        | ("-ideslave"|"-emacs"|"-emacs-U")::tl -> set_slave_opt tl
+        | ("-async-proofs"
+          |"-compile"
+          |"-compile-verbose")::_::tl -> set_slave_opt tl
+        | x::tl -> x :: set_slave_opt tl in
+      let args =
+        Array.of_list (set_slave_opt (List.tl (Array.to_list Sys.argv))) in
+      let env =
+        Array.append !async_proofs_workers_extra_env (Unix.environment ()) in
+      respawn ~args ~env () in
     let last_task = ref None in
     let task_expired = ref false in
     let task_cancelled = ref false in
@@ -991,13 +958,16 @@ end = struct (* {{{ *)
           let rec loop () =
             let response = unmarshal_response ic in
             match task, response with
-            | TaskBuildProof(_,_,_, assign,_,_,_), RespBuiltProof pl ->
+            | TaskBuildProof(_,_,_, assign,_,loc,_,s),
+              RespBuiltProof(pl, time)->
                 assign (`Val pl);
                 (* We restart the slave, to avoid memory leaks.  We could just
                    Pp.feedback (Interface.InProgress ~-1) *)
+                record_pb_time s loc time;
                 last_task := None;
                 raise KillRespawn
-            | TaskBuildProof(_,_,_, assign,_,_,_),RespError(err_id,valid,e,s) ->
+            | TaskBuildProof(_,_,_, assign,_,_,_,_),
+              RespError(err_id,valid,e,s) ->
                 let e = Stateid.add ~valid (RemoteException e) err_id in
                 assign (`Exn e);
                 Option.iter (State.assign valid) s;
@@ -1029,7 +999,7 @@ end = struct (* {{{ *)
             msg_warning(strbrk("Marshalling error: "^s^". "^
               "The system state could not be sent to the worker process. "^
               "Falling back to local, lazy, evaluation."));
-            let TaskBuildProof (exn_info, _, stop, assign,_,loc,_) = task in
+            let TaskBuildProof (exn_info, _, stop, assign,_,loc,_,_) = task in
             assign(`Comp(build_proof_here exn_info loc stop));
             Pp.feedback (Interface.InProgress ~-1)
         | MarshalError s ->
@@ -1043,28 +1013,35 @@ end = struct (* {{{ *)
     with
     | KillRespawn ->
         Pp.feedback (Interface.InProgress ~-1);
-        Worker.kill proc;
-        ignore(Worker.wait proc);
-        manage_slave cancel_user_req respawn
-    | Sys_error _ | Invalid_argument _ | End_of_file
-      when !task_expired ->
+        Worker.kill proc; ignore(Worker.wait proc);
+        manage_slave ~cancel:cancel_user_req id_slave respawn
+    | Sys_error _ | Invalid_argument _ | End_of_file when !task_expired ->
         Pp.feedback (Interface.InProgress ~-1);
         ignore(Worker.wait proc);
-        manage_slave cancel_user_req respawn
+        manage_slave ~cancel:cancel_user_req id_slave respawn
+    | Sys_error _ | Invalid_argument _ | End_of_file when !task_cancelled ->
+        msg_warning(strbrk "The worker was cancelled.");
+        Option.iter (fun task ->
+          let TaskBuildProof (_, start, _, assign, _,_,_,_) = task in
+          let s = "Worker cancelled by the user" in
+          let e = Stateid.add ~valid:start (RemoteException (strbrk s)) start in
+          assign (`Exn e);
+          Pp.feedback ~state_id:start (Interface.ErrorMsg (Loc.ghost, s));
+          Pp.feedback (Interface.InProgress ~-1);
+        ) !last_task;
+        Worker.kill proc; ignore(Worker.wait proc);
+        manage_slave ~cancel:cancel_user_req id_slave respawn
     | Sys_error _ | Invalid_argument _ | End_of_file
-      when !fallback_to_lazy_if_slave_dies || !task_cancelled ->
-        if not !task_cancelled then
-          msg_warning(strbrk "The worker process died badly.");
-        (match !last_task with
-        | Some task ->
-            msg_warning(strbrk "Falling back to local, lazy, evaluation.");
-            let TaskBuildProof (exn_info, _, stop, assign,_,loc,_) = task in
-            assign(`Comp(build_proof_here exn_info loc stop));
-            Pp.feedback (Interface.InProgress ~-1);
-        | None -> ());
-        Worker.kill proc;
-        ignore(Worker.wait proc);
-        manage_slave cancel_user_req respawn
+      when !fallback_to_lazy_if_slave_dies ->
+        msg_warning(strbrk "The worker process died badly.");
+        Option.iter (fun task ->
+          msg_warning(strbrk "Falling back to local, lazy, evaluation.");
+          let TaskBuildProof (exn_info, _, stop, assign,_,loc,_,_) = task in
+          assign(`Comp(build_proof_here exn_info loc stop));
+          Pp.feedback (Interface.InProgress ~-1);
+        ) !last_task;
+        Worker.kill proc; ignore(Worker.wait proc);
+        manage_slave ~cancel:cancel_user_req id_slave respawn
     | Sys_error _ | Invalid_argument _ | End_of_file ->
         Worker.kill proc;
         let exit_status proc = match Worker.wait proc with
@@ -1075,7 +1052,7 @@ end = struct (* {{{ *)
         pr_err ("Fatal worker error: " ^ (exit_status proc));
         flush_all (); exit 1
 
-  let init () = SlavesPool.init !Flags.async_proofs_n_workers manage_slave
+  let init () = WorkersPool.init !Flags.async_proofs_n_workers manage_slave
 
   let slave_ic = ref stdin
   let slave_oc = ref stdout
@@ -1091,15 +1068,7 @@ end = struct (* {{{ *)
       | [] -> let data = f () in l := List.tl data; List.hd data
       | x::tl -> l := tl; x
 
-  let slave_handshake () =
-    try
-      let v = (Marshal.from_channel !slave_ic : int) in
-      assert(v = 17);
-      Marshal.to_channel !slave_oc v []; flush !slave_oc;
-      prerr_endline "Handshake OK"
-    with e ->
-      prerr_endline ("Handshake failed: " ^ Printexc.to_string e);
-      exit 1
+  let slave_handshake () = WorkersPool.worker_handshake !slave_ic !slave_oc
 
   let slave_main_loop reset =
     let slave_feeder oc fb =
@@ -1151,13 +1120,14 @@ end = struct (* {{{ *)
     done
 
   (* For external users this name is nicer than request *)
-  type tasks = request list
-  let dump () =
-    assert(SlavesPool.is_empty ()); (* ATM, we allow that only if no slaves *)
+  type tasks = int request list
+  let dump f2t_map =
+    assert(WorkersPool.is_empty ()); (* ATM, we allow that only if no slaves *)
     let tasks = TQueue.dump queue in
     prerr_endline (Printf.sprintf "dumping %d\n" (List.length tasks));
     let tasks = List.map request_of_task tasks in
-    tasks
+    List.map (function ReqBuildProof(a,b,c,d,x,e) ->
+      ReqBuildProof(a,b,c,d,List.assoc x f2t_map,e)) tasks
 
 end (* }}} *)
 
@@ -1171,15 +1141,19 @@ end = struct (* {{{ *)
 
 let pstate = ["meta counter"; "evar counter"; "program-tcc-table"]
 
-let delegate_policy_check () =
+let delegate_policy_check time =
   if interactive () = `Yes then
-    !Flags.async_proofs_mode = Flags.APonParallel 0 ||
-    !Flags.async_proofs_mode = Flags.APonLazy
+    (!Flags.async_proofs_mode = Flags.APonParallel 0 ||
+    !Flags.async_proofs_mode = Flags.APonLazy) && time >= 1.0
   else if !Flags.compilation_mode = Flags.BuildVi then true
-  else !Flags.async_proofs_mode <> Flags.APoff
+  else !Flags.async_proofs_mode <> Flags.APoff && time >= 1.0
 
 let collect_proof cur hd brkind id =
  prerr_endline ("Collecting proof ending at "^Stateid.to_string id);
+ let no_name = "" in
+ let name = function
+   | [] -> no_name
+   | id :: _ -> Id.to_string id in
  let loc = (snd cur).loc in
  let is_defined = function
    | _, { expr = VernacEndProof (Proved (false,_)) } -> true
@@ -1188,41 +1162,54 @@ let collect_proof cur hd brkind id =
     let view = VCS.visit id in
     match last, view.step with
     | _, `Cmd (x, _) -> collect (Some (id,x)) (id::accn) view.next
-    | _, `Alias _ -> `Sync `Alias
-    | _, `Fork(_,_,_,_::_::_)-> `Sync `MutualProofs
+    | _, `Alias _ -> `Sync (no_name,`Alias)
+    | _, `Fork(_,_,_,_::_::_)-> `Sync (no_name,`MutualProofs)
     | _, `Fork(_,_,Doesn'tGuaranteeOpacity,_) ->
-        `Sync `Doesn'tGuaranteeOpacity
+        `Sync (no_name,`Doesn'tGuaranteeOpacity)
     | Some (parent, ({ expr = VernacProof(_,Some _)} as v)),
       `Fork (_, hd', GuaranteesOpacity, ids) ->
+        let name = name ids in
+        let time = get_hint_bp_time name in
         assert (VCS.Branch.equal hd hd' || VCS.Branch.equal hd VCS.edit_branch);
-        if delegate_policy_check () then `ASync (parent,Some v,accn,ids)
-        else `Sync `Policy
+        if delegate_policy_check time
+        then `ASync (parent,Some v,accn,name)
+        else `Sync (name,`Policy)
     | Some (parent, ({ expr = VernacProof(t,None)} as v)),
       `Fork (_, hd', GuaranteesOpacity, ids) when
        not (State.is_cached parent) &&
        !Flags.compilation_mode = Flags.BuildVi ->
         (try
-          let hint = get_hint_ctx loc in
+          let name = name ids in
+          let hint, time = get_hint_ctx loc, get_hint_bp_time name in
           assert (VCS.Branch.equal hd hd'||VCS.Branch.equal hd VCS.edit_branch);
           v.expr <- VernacProof(t, Some hint);
-          if delegate_policy_check () then `ASync (parent,Some v,accn,ids)
-          else `Sync `Policy
-        with Not_found -> `Sync `NoHint)
+          if delegate_policy_check time
+          then `ASync (parent,Some v,accn,name)
+          else `Sync (name,`Policy)
+        with Not_found -> `Sync (no_name,`NoHint))
     | Some (parent, _), `Fork (_, hd', GuaranteesOpacity, ids) ->
         assert (VCS.Branch.equal hd hd' || VCS.Branch.equal hd VCS.edit_branch);
-        if delegate_policy_check () then `MaybeASync (parent, accn, ids)
-        else `Sync `Policy
-    | _, `Sideff (`Ast (x,_)) -> collect (Some (id,x)) (id::accn) view.next
-    | _, `Sideff (`Id _) -> `Sync `NestedProof
-    | _ -> `Sync `Unknown in
+        let name = name ids in
+        let time = get_hint_bp_time name in
+        if delegate_policy_check time
+        then `MaybeASync (parent, accn, name)
+        else `Sync (name,`Policy)
+    | _, `Sideff _ -> `Sync (no_name,`NestedProof)
+    | _ -> `Sync (no_name,`Unknown) in
  match cur, (VCS.visit id).step, brkind with
  |( parent, { expr = VernacExactProof _ }), `Fork _, _ ->
-     `Sync `Immediate
+     `Sync (no_name,`Immediate)
  | _, _, { VCS.kind = `Edit _ }  -> collect (Some cur) [] id
  | _ ->
-     if State.is_cached id then `Sync `AlreadyEvaluated
-     else if is_defined cur then `Sync `Transparent
-     else collect (Some cur) [] id
+     if is_defined cur then `Sync (no_name,`Transparent)
+     else
+       let rc = collect (Some cur) [] id in
+       if not (State.is_cached id) then rc
+       else (* we already have the proof, no gain in delaying *)
+         match rc with
+         | `Sync(name,_) -> `Sync (name,`AlreadyEvaluated)
+         | `MaybeASync(_,_,name) -> `Sync (name,`AlreadyEvaluated)
+         | `ASync(_,_,_,name) -> `Sync (name,`AlreadyEvaluated)
 
 let string_of_reason = function
   | `Transparent -> "Transparent"
@@ -1263,7 +1250,7 @@ let known_state ?(redefine_qed=false) ~cache id =
       let view = VCS.visit id in
       match view.step with
       | `Alias id -> (fun () ->
-            reach view.next; reach id; Vernacentries.try_print_subgoals ()
+            reach view.next; reach id
           ), cache
       | `Cmd (x,_) -> (fun () ->
             reach view.next; vernac_interp id x
@@ -1274,7 +1261,7 @@ let known_state ?(redefine_qed=false) ~cache id =
           ), `Yes
       | `Qed ({ qast = x; keep; brinfo; brname } as qed, eop) ->
           let rec aux = function
-          | `ASync (start, proof_using_ast, nodes,ids) -> (fun () ->
+          | `ASync (start, proof_using_ast, nodes, name) -> (fun () ->
                 prerr_endline ("Asynchronous " ^ Stateid.to_string id);
                 VCS.create_cluster nodes ~tip:id;
                 begin match keep, brinfo, qed.fproof with
@@ -1283,16 +1270,14 @@ let known_state ?(redefine_qed=false) ~cache id =
                     assert(redefine_qed = true);
                     VCS.create_cluster nodes ~tip:id;
                     let fp, cancel = Slaves.build_proof
-                        ~loc:x.loc ~exn_info:(id,eop) ~start ~stop:eop
-                        ~name:(String.concat " " (List.map Id.to_string ids)) in
+                      ~loc:x.loc ~exn_info:(id,eop) ~start ~stop:eop ~name in
                     Future.replace ofp fp;
                     qed.fproof <- Some (fp, cancel)
                 | VtKeep, { VCS.kind = `Proof _ }, Some _ -> assert false
                 | VtKeep, { VCS.kind = `Proof _ }, None ->
                     reach ~cache:`Shallow start;
                     let fp, cancel = Slaves.build_proof
-                      ~loc:x.loc ~exn_info:(id,eop) ~start ~stop:eop
-                      ~name:(String.concat " " (List.map Id.to_string ids)) in
+                      ~loc:x.loc ~exn_info:(id,eop) ~start ~stop:eop ~name in
                     qed.fproof <- Some (fp, cancel);
                     let proof =
                       Proof_global.close_future_proof ~feedback_id:id fp in
@@ -1307,17 +1292,16 @@ let known_state ?(redefine_qed=false) ~cache id =
                 end;
                 Proof_global.discard_all ()
               ), if redefine_qed then `No else `Yes
-          | `Sync `Immediate -> (fun () -> 
+          | `Sync (name, `Immediate) -> (fun () -> 
                 assert (Stateid.equal view.next eop);
                 reach eop; vernac_interp id x; Proof_global.discard_all ()
               ), `Yes
-          | `Sync reason -> (fun () ->
+          | `Sync (name, reason) -> (fun () ->
                 prerr_endline ("Synchronous " ^ Stateid.to_string id ^ " " ^
                   string_of_reason reason);
                 reach eop;
                 let wall_clock = Unix.gettimeofday () in
-                Aux_file.record_in_aux_at x.loc "proof_build_time"
-                  (Printf.sprintf "%.3f" (wall_clock -. !wall_clock_last_fork));
+                record_pb_time name x.loc (wall_clock -. !wall_clock_last_fork);
                 begin match keep with
                 | VtKeep ->
                     let proof =
@@ -1334,16 +1318,13 @@ let known_state ?(redefine_qed=false) ~cache id =
                 end;
                 Proof_global.discard_all ()
               ), `Yes
-          | `MaybeASync (start, nodes, ids) -> (fun () ->
+          | `MaybeASync (start, nodes, name) -> (fun () ->
                 prerr_endline ("MaybeAsynchronous " ^ Stateid.to_string id);
                 reach ~cache:`Shallow start;
                 (* no sections *)
                 if List.is_empty (Environ.named_context (Global.env ()))
-                   (* && Safe_typing.is_curmod_library (Global.safe_env ()) *)
-                then
-                  fst (aux (`ASync (start, None, nodes,ids))) ()
-                else
-                  fst (aux (`Sync `Unknown)) ()
+                then fst (aux (`ASync (start, None, nodes, name))) ()
+                else fst (aux (`Sync (name, `Unknown))) ()
               ), if redefine_qed then `No else `Yes
           in
           aux (collect_proof (view.next, x) brname brinfo eop)
@@ -1555,9 +1536,9 @@ let join () =
   jab (VCS.get_branch_pos VCS.Branch.master);
   VCS.print ()
 
-type tasks = Slaves.tasks
-let dump () = Slaves.dump ()
-let check_task name tasks i =
+type tasks = Slaves.tasks * RemoteCounter.remote_counters_status
+let dump x = Slaves.dump x, RemoteCounter.backup ()
+let check_task name (tasks,_) i =
   let vcs = VCS.backup () in
   try
     let rc = Future.purify (Slaves.check_task name tasks) i in
@@ -1565,7 +1546,21 @@ let check_task name tasks i =
     VCS.restore vcs;
     rc
   with e when Errors.noncritical e -> VCS.restore vcs; false
-let info_tasks tasks = Slaves.info_tasks tasks
+let info_tasks (tasks,_) = Slaves.info_tasks tasks
+let finish_tasks name u d p (t,rcbackup as tasks) =
+  RemoteCounter.restore rcbackup;
+  let finish_task u (_,_,i) =
+    let vcs = VCS.backup () in
+    let u = Future.purify (Slaves.finish_task name u d p t) i in
+    Pp.pperr_flush ();
+    VCS.restore vcs;
+    u in
+  try
+    let u, a, _ = List.fold_left finish_task u (info_tasks tasks) in
+    (u,a,true), p
+  with e ->
+    Pp.pperrnl Pp.(str"File " ++ str name ++ str ":" ++ spc () ++ print e);
+    exit 1
 
 let merge_proof_branch qast keep brname =
   let brinfo = VCS.get_branch brname in
@@ -1623,7 +1618,7 @@ let process_transaction ~tty verbose c (loc, expr) =
   let warn_if_pos a b =
     if b then msg_warning(pr_ast a ++ str" should not be part of a script") in
   let v, x = expr, { verbose = verbose && Flags.is_verbose(); loc; expr } in
-  prerr_endline ("{{{ execute: "^ string_of_ppcmds (pr_ast x));
+  prerr_endline ("{{{ processing: "^ string_of_ppcmds (pr_ast x));
   let vcs = VCS.backup () in
   try
     let head = VCS.current_branch () in
@@ -1769,7 +1764,7 @@ let process_transaction ~tty verbose c (loc, expr) =
               expr = VernacShow (ShowGoal OpenSubgoals) }
       | _ -> ()
     end;
-    prerr_endline "executed }}}";
+    prerr_endline "processed }}}";
     VCS.print ();
     rc
   with e ->
@@ -1808,6 +1803,8 @@ let add ~ontop ?(check=ignore) verb eid s =
     (* For now, arbitrary edits should be announced with edit_at *)
     anomaly(str"Not yet implemented, the GUI should not try this")
   end
+
+let set_perspective id_list = Slaves.set_perspective id_list
 
 type focus = {
   start : Stateid.t;
@@ -1958,11 +1955,16 @@ let get_current_proof_name () =
   Option.map unmangle (proofname (VCS.current_branch ()))
 
 let get_script prf =
+  let branch, test =
+    match prf with
+    | None -> VCS.Branch.master, fun _ -> true
+    | Some name -> VCS.current_branch (),  List.mem name in
   let rec find acc id =
-    if Stateid.equal id Stateid.initial || Stateid.equal id Stateid.dummy then acc else
+    if Stateid.equal id Stateid.initial ||
+       Stateid.equal id Stateid.dummy then acc else
     let view = VCS.visit id in
     match view.step with
-    | `Fork (_,_,_,ns) when List.mem prf ns -> acc
+    | `Fork (_,_,_,ns) when test ns -> acc
     | `Qed (qed, proof) -> find [qed.qast.expr, (VCS.get_info id).n_goals] proof
     | `Sideff (`Ast (x,_)) ->
          find ((x.expr, (VCS.get_info id).n_goals)::acc) view.next
@@ -1971,7 +1973,7 @@ let get_script prf =
     | `Alias id -> find acc id
     | `Fork _ -> find acc view.next
     in
-  find [] (VCS.get_branch_pos VCS.Branch.master)
+  find [] (VCS.get_branch_pos branch)
 
 (* indentation code for Show Script, initially contributed
    by D. de Rauglaudre *)
@@ -2020,17 +2022,18 @@ let indent_script_item ((ng1,ngl1),nl,beginend,ppl) (cmd,ng) =
 let show_script ?proof () =
   try
     let prf =
-      match proof with
-      | None -> Pfedit.get_current_proof_name ()
-      | Some (p,_) -> p.Proof_global.id in
+      try match proof with
+      | None -> Some (Pfedit.get_current_proof_name ())
+      | Some (p,_) -> Some (p.Proof_global.id)
+      with Proof_global.NoCurrentProof -> None
+    in
     let cmds = get_script prf in
     let _,_,_,indented_cmds =
       List.fold_left indent_script_item ((1,[]),false,[],[]) cmds
     in
     let indented_cmds = List.rev (indented_cmds) in
     msg_notice (v 0 (Pp.prlist_with_sep Pp.fnl (fun x -> x) indented_cmds))
-  with Proof_global.NoCurrentProof -> ()
-  | Vcs_aux.Expired -> ()
+  with Vcs_aux.Expired -> ()
 
 let () = Vernacentries.show_script := show_script
 

@@ -8,14 +8,11 @@
 
 open Util
 open Loc
-open Pp
 open Names
 open Term
 open Context
 open Environ
-open Libnames
 open Mod_subst
-open Termops
 
 (** {5 Existential variables and unification states}
 
@@ -273,6 +270,11 @@ type 'a sigma = {
 
 val sig_it  : 'a sigma -> 'a
 val sig_sig : 'a sigma -> evar_map
+
+(** {5 The state monad with state an evar map} *)
+
+module MonadR : Monad.S with type +'a t = evar_map -> evar_map * 'a
+module Monad  : Monad.S with type +'a t = evar_map -> 'a * evar_map
 
 (** {5 Meta machinery}
 

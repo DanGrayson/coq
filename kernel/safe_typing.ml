@@ -91,7 +91,18 @@ open Declarations
 
 *)
 
-type library_info = DirPath.t * Digest.t
+type vodigest =
+  | Dvo_or_vi of Digest.t        (* The digest of the seg_lib part *)
+  | Dvivo of Digest.t * Digest.t (* The digest of the seg_lib + seg_univ part *)
+
+let digest_match ~actual ~required =
+  match actual, required with
+  | Dvo_or_vi d1, Dvo_or_vi d2
+  | Dvivo (d1,_), Dvo_or_vi d2 -> String.equal d1 d2
+  | Dvivo (d1,e1), Dvivo (d2,e2) -> String.equal d1 d2 && String.equal e1 e2
+  | Dvo_or_vi _, Dvivo _ -> false
+
+type library_info = DirPath.t * vodigest
 
 (** Functor and funsig parameters, most recent first *)
 type module_parameters = (MBId.t * module_type_body) list
@@ -252,11 +263,11 @@ let check_initial senv = assert (is_initial senv)
     with the correct digests. *)
 
 let check_imports current_libs needed =
-  let check (id,stamp) =
+  let check (id,required) =
     try
-      let actual_stamp = List.assoc_f DirPath.equal id current_libs in
-      if not (String.equal stamp actual_stamp) then
-	Errors.error
+      let actual = List.assoc_f DirPath.equal id current_libs in
+      if not(digest_match ~actual ~required) then
+        Errors.error
           ("Inconsistent assumptions over module "^(DirPath.to_string id)^".")
     with Not_found ->
       Errors.error ("Reference to unknown module "^(DirPath.to_string id)^".")
@@ -282,11 +293,11 @@ let safe_push_named (id,_,_ as d) env =
 
 let push_named_def (id,de) senv =
   let (c,typ,cst) = Term_typing.translate_local_def senv.env id de in
-  let c = match c with
-    | Def c -> Lazyconstr.force c
-    | OpaqueDef c -> Lazyconstr.force_opaque (Future.join c)
+  let c,cst' = match c with
+    | Def c -> Mod_subst.force_constr c, Univ.empty_constraint
+    | OpaqueDef o -> Opaqueproof.force_proof o, Opaqueproof.force_constraints o
     | _ -> assert false in
-  let cst = Future.join cst in
+  let senv = add_constraints (Now cst') senv in
   let senv' = add_constraints (Now cst) senv in
   let env'' = safe_push_named (id,Some c,typ) senv'.env in
   (cst, {senv' with env=env''})
@@ -314,13 +325,19 @@ let labels_of_mib mib =
   get ()
 
 let constraints_of_sfb = function
-  | SFBmind mib -> Now mib.mind_constraints
-  | SFBmodtype mtb -> Now mtb.typ_constraints
-  | SFBmodule mb -> Now mb.mod_constraints
-  | SFBconst cb ->
-      match Future.peek_val cb.const_constraints with
-      | Some c -> Now c
-      | None -> Later cb.const_constraints
+  | SFBmind mib -> [Now mib.mind_constraints]
+  | SFBmodtype mtb -> [Now mtb.typ_constraints]
+  | SFBmodule mb -> [Now mb.mod_constraints]
+  | SFBconst cb -> [Now cb.const_constraints] @
+      match cb.const_body with
+      | (Undef _ | Def _) -> []
+      | OpaqueDef lc ->
+          match Opaqueproof.get_constraints lc with
+          | None -> []
+          | Some fc ->
+              match Future.peek_val fc with
+              | None -> [Later fc]
+              | Some c -> [Now c]
 
 (** A generic function for adding a new field in a same environment.
     It also performs the corresponding [add_constraints]. *)
@@ -341,7 +358,7 @@ let add_field ((l,sfb) as field) gn senv =
     | SFBmodule _ | SFBmodtype _ ->
       check_modlabel l senv; (Label.Set.singleton l, Label.Set.empty)
   in
-  let senv = add_constraints (constraints_of_sfb sfb) senv in
+  let senv = List.fold_right add_constraints (constraints_of_sfb sfb) senv in
   let env' = match sfb, gn with
     | SFBconst cb, C con -> Environ.add_constant con cb senv.env
     | SFBmind mib, I mind -> Environ.add_mind mind mib senv.env
@@ -377,8 +394,7 @@ let add_constant dir l decl senv =
     | OpaqueDef lc when DirPath.is_empty dir ->
       (* In coqc, opaque constants outside sections will be stored
          indirectly in a specific table *)
-      { cb with const_body =
-           OpaqueDef (Future.chain ~greedy:true ~pure:true lc Lazyconstr.turn_indirect) }
+      { cb with const_body = OpaqueDef (Opaqueproof.turn_indirect lc) }
     | _ -> cb
   in
   let senv' = add_field (l,SFBconst cb) (C kn) senv in
@@ -520,13 +536,22 @@ let build_module_body params restype senv =
     (constraints, imports, etc) *)
 
 let propagate_senv newdef newenv newresolver senv oldsenv =
+  let now_cst, later_cst = List.partition Future.is_val senv.future_cst in
+  (* This asserts that after Paral-ITP, standard vo compilation is behaving
+   * exctly as before: the same universe constraints are added to modules *)
+  if !Flags.compilation_mode = Flags.BuildVo &&
+     !Flags.async_proofs_mode = Flags.APoff then assert(later_cst = []);
   { oldsenv with
     env = newenv;
     modresolver = newresolver;
     revstruct = newdef::oldsenv.revstruct;
     modlabels = Label.Set.add (fst newdef) oldsenv.modlabels;
-    univ = Univ.union_constraints senv.univ oldsenv.univ;
-    future_cst = senv.future_cst @ oldsenv.future_cst;
+    univ =
+      List.fold_left (fun acc cst ->
+        Univ.union_constraints acc (Future.force cst))
+      (Univ.union_constraints senv.univ oldsenv.univ)
+      now_cst;
+    future_cst = later_cst @ oldsenv.future_cst;
     (* engagement is propagated to the upper level *)
     engagement = senv.engagement;
     imports = senv.imports;
@@ -543,7 +568,10 @@ let end_module l restype senv =
   let mb = build_module_body params restype senv in
   let newenv = oldsenv.env in
   let newenv = set_engagement_opt newenv senv.engagement in
-  let senv'= propagate_loads {senv with env=newenv} in
+  let senv'=
+    propagate_loads { senv with
+      env = newenv;
+      univ = Univ.union_constraints senv.univ mb.mod_constraints} in
   let newenv = Environ.add_constraints mb.mod_constraints senv'.env in
   let newenv = Modops.add_module mb newenv in
   let newresolver =
@@ -644,8 +672,6 @@ type compiled_library = {
 
 type native_library = Nativecode.global list
 
-let join_compiled_library l = Modops.join_module l.comp_mod
-
 let start_library dir senv =
   check_initial senv;
   assert (not (DirPath.is_empty dir));
@@ -660,10 +686,11 @@ let start_library dir senv =
 let export compilation_mode senv dir =
   let senv =
     try
-      if compilation_mode = Flags.BuildVi then senv (* FIXME: cleanup future*)
+      if compilation_mode = Flags.BuildVi then { senv with future_cst = [] }
       else join_safe_environment senv
-    with e -> Errors.errorlabstrm "future" (Errors.print e)
+    with e -> Errors.errorlabstrm "export" (Errors.print e)
   in
+  assert(senv.future_cst = []);
   let () = check_current_library dir senv in
   let mp = senv.modpath in
   let str = NoFunctor (List.rev senv.revstruct) in
@@ -691,12 +718,15 @@ let export compilation_mode senv dir =
   in
   mp, lib, ast
 
-let import lib digest senv =
+(* cst are the constraints that were computed by the vi2vo step and hence are
+ * not part of the mb.mod_constraints field (but morally should be) *)
+let import lib cst vodigest senv =
   check_imports senv.imports lib.comp_deps;
   check_engagement senv.env lib.comp_enga;
   let mp = MPfile lib.comp_name in
   let mb = lib.comp_mod in
   let env = Environ.add_constraints mb.mod_constraints senv.env in
+  let env = Environ.add_constraints cst env in
   (mp, lib.comp_natsymbs),
   { senv with
     env =
@@ -705,9 +735,8 @@ let import lib digest senv =
        in
        Modops.add_linked_module mb linkinfo env);
     modresolver = Mod_subst.add_delta_resolver mb.mod_delta senv.modresolver;
-    imports = (lib.comp_name,digest)::senv.imports;
+    imports = (lib.comp_name,vodigest)::senv.imports;
     loads = (mp,mb)::senv.loads }
-
 
 (** {6 Safe typing } *)
 

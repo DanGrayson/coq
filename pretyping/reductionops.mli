@@ -12,50 +12,71 @@ open Context
 open Univ
 open Evd
 open Environ
-open Closure
 
 (** Reduction Functions. *)
 
 exception Elimconst
 
-(** 90% copy-paste of kernel/closure.ml but polymorphic and with extra
-    arguments for storing refold *)
-type 'a stack_member =
-| Zapp of 'a list
-| Zcase of case_info * 'a * 'a array * ('a * 'a list) option
-| Zfix of fixpoint * 'a stack * ('a * 'a list) option
-| Zshift of int
-| Zupdate of 'a
+(** Machinery to custom the behavior of the reduction *)
+module ReductionBehaviour : sig
+  type flag = [ `ReductionDontExposeCase | `ReductionNeverUnfold ]
 
-and 'a stack = 'a stack_member list
+(** [set is_local ref (recargs, nargs, flags)] *)
+  val set :
+    bool -> Globnames.global_reference -> (int list * int * flag list) -> unit
+  val get :
+    Globnames.global_reference -> (int list * int * flag list) option
+  val print : Globnames.global_reference -> Pp.std_ppcmds
+end
 
-val empty_stack : 'a stack
-val compare_stack_shape : 'a stack -> 'a stack -> bool
-(** [fold_stack2 f x sk1 sk2] folds [f] on any pair of term in [(sk1,sk2)].
-@return the result and the lifts to apply on the terms *)
-val fold_stack2 : ('a -> Term.constr -> Term.constr -> 'a) -> 'a ->
-  Term.constr stack -> Term.constr stack -> 'a * int * int
-val append_stack_app : 'a array -> 'a stack -> 'a stack
-val append_stack_app_list : 'a list -> 'a stack -> 'a stack
+module Stack : sig
+  type 'a app_node
 
-val decomp_stack : 'a stack -> ('a * 'a stack) option
-val strip_app : 'a stack -> 'a list * 'a stack
-(** Takes the n first arguments of application put on the stack. Fails is the
-    stack does not start by n arguments of application. *)
-val nfirsts_app_of_stack : int -> 'a stack -> 'a list
-(** @return (the nth first elements, the (n+1)th element, the remaining stack)  *)
-val strip_n_app : int -> 'a stack -> ('a list * 'a * 'a stack) option
-val list_of_app_stack : 'a stack -> 'a list option
-val array_of_app_stack : 'a stack -> 'a array option
-val stack_assign : 'a stack -> int -> 'a -> 'a stack
-val stack_args_size : 'a stack -> int
-val zip : ?refold:bool -> constr * constr stack -> constr
-val stack_tail : int -> 'a stack -> 'a stack
-val stack_nth : 'a stack -> int -> 'a
+  val pr_app_node : ('a -> Pp.std_ppcmds) -> 'a app_node -> Pp.std_ppcmds
+
+  type 'a member =
+  | App of 'a app_node
+  | Case of case_info * 'a * 'a array * ('a * 'a list) option
+  | Fix of fixpoint * 'a t * ('a * 'a list) option
+  | Shift of int
+  | Update of 'a
+  and 'a t = 'a member list
+
+  val pr : ('a -> Pp.std_ppcmds) -> 'a t -> Pp.std_ppcmds
+
+  val empty : 'a t
+  val append_app : 'a array -> 'a t -> 'a t
+  val decomp : 'a t -> ('a * 'a t) option
+
+  val decomp_node_last : 'a app_node -> 'a t -> ('a * 'a t)
+
+  val compare_shape : 'a t -> 'a t -> bool
+  (** [fold2 f x sk1 sk2] folds [f] on any pair of term in [(sk1,sk2)].
+      @return the result and the lifts to apply on the terms *)
+  val fold2 : ('a -> Term.constr -> Term.constr -> 'a) -> 'a ->
+    Term.constr t -> Term.constr t -> 'a * int * int
+  val append_app_list : 'a list -> 'a t -> 'a t
+
+  (** if [strip_app s] = [(a,b)], then [s = a @ b] and [b] does not
+      start by App or Shift *)
+  val strip_app : 'a t -> 'a t * 'a t
+  (** @return (the nth first elements, the (n+1)th element, the remaining stack)  *)
+  val strip_n_app : int -> 'a t -> ('a t * 'a * 'a t) option
+
+  val not_purely_applicative : 'a t -> bool
+  val list_of_app_stack : constr t -> constr list option
+
+  val assign : 'a t -> int -> 'a -> 'a t
+  val args_size : 'a t -> int
+  val tail : int -> 'a t -> 'a t
+  val nth : 'a t -> int -> 'a
+
+  val zip : ?refold:bool -> constr * constr t -> constr
+end
 
 (************************************************************************)
 
-type state = constr * constr stack
+type state = constr * constr Stack.t
 
 type contextual_reduction_function = env -> evar_map -> constr -> constr
 type reduction_function = contextual_reduction_function
@@ -71,6 +92,8 @@ type contextual_state_reduction_function =
     env -> evar_map -> state -> state
 type state_reduction_function = contextual_state_reduction_function
 type local_state_reduction_function = evar_map -> state -> state
+
+val pr_state : state -> Pp.std_ppcmds
 
 (** {6 Machinery about a stack of unfolded constant }
 
@@ -94,7 +117,7 @@ val strong_prodspine : local_reduction_function -> local_reduction_function
 val stack_reduction_of_reduction :
   'a reduction_function -> 'a state_reduction_function
 i*)
-val stacklam : (state -> 'a) -> constr list -> constr -> constr stack -> 'a
+val stacklam : (state -> 'a) -> constr list -> constr -> constr Stack.t -> 'a
 
 val whd_state_gen : ?csts:Cst_stack.t -> bool -> Closure.RedFlags.reds ->
   Environ.env -> Evd.evar_map -> state -> state * Cst_stack.t
@@ -109,8 +132,6 @@ val nf_betaiota : local_reduction_function
 val nf_betaiotazeta : local_reduction_function
 val nf_betadeltaiota : reduction_function
 val nf_evar : evar_map -> constr -> constr
-
-val nf_betaiota_preserving_vm_cast : reduction_function
 
 (** Lazy strategy, weak head reduction *)
 
@@ -197,11 +218,9 @@ val find_conclusion : env -> evar_map -> constr -> (constr,constr) kind_of_term
 val is_arity : env ->  evar_map -> constr -> bool
 val is_sort : env -> evar_map -> types -> bool
 
-val whd_programs :  reduction_function
-
 val contract_fix : ?env:Environ.env -> fixpoint ->
   (constr * constr list) option -> constr
-val fix_recarg : fixpoint -> constr stack -> (int * constr) option
+val fix_recarg : fixpoint -> constr Stack.t -> (int * constr) option
 
 (** {6 Querying the kernel conversion oracle: opaque/transparent constants } *)
 val is_transparent : Environ.env -> 'a tableKey -> bool

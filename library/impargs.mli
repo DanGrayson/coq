@@ -10,7 +10,6 @@ open Names
 open Globnames
 open Term
 open Environ
-open Nametab
 
 (** {6 Implicit Arguments } *)
 (** Here we store the implicit arguments. Notice that we
@@ -143,3 +142,5 @@ type implicit_discharge_request =
   | ImplInteractive of global_reference * implicits_flags *
       implicit_interactive_request
 
+val explicitation_eq : Constrexpr.explicitation -> Constrexpr.explicitation -> bool
+(** Equality on [explicitation]. *)

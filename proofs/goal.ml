@@ -193,7 +193,7 @@ module Refinable = struct
     let my_type = Retyping.get_type_of env !rdefs t in
     let j = Environ.make_judge t my_type in
     let (new_defs,j') =
-      Coercion.inh_conv_coerce_to (Loc.ghost) env !rdefs j typ
+      Coercion.inh_conv_coerce_to true (Loc.ghost) env !rdefs j typ
     in
     rdefs := new_defs;
     j'.Environ.uj_val
@@ -374,8 +374,8 @@ let defs _ rdefs _ _ =
   !rdefs
 
 let enter f = (); fun env rdefs gl info ->
-  let info = Evarutil.nf_evar_info !rdefs info in
-  f env !rdefs (Evd.evar_hyps info) (Evd.evar_concl info) gl
+  let sigma = !rdefs in
+  f env sigma (Evd.evar_hyps info) (Evd.evar_concl info) gl
 
 (*** Conversion in goals ***)
 
@@ -449,31 +449,6 @@ let rename_hyp id1 id2 = (); fun env rdefs gl info ->
   let new_goal = descendent gl new_evar in
   rdefs := Evd.define gl.content new_subproof !rdefs;
   { subgoals = [new_goal] }
-
-(*** Additional functions ***)
-
-(* emulates List.map for functions of type
-   [Evd.evar_map -> 'a -> 'b * Evd.evar_map] on lists of type 'a, by propagating
-   new evar_map to next definition. *)
-(*This sort of construction actually works with any monad (here the State monade
-   in Haskell). There is a generic construction in Haskell called mapM.
-*)
-let rec list_map f l s =
-  match l with
-  | [] -> ([],s)
-  | a::l -> let (a,s) = f s a in
-               let (l,s) = list_map f l s in
-	       (a::l,s)
-
-(* Another instance of the generic monadic map *)
-let rec sensitive_list_map f = function
-  | [] -> return []
-  | a::l ->
-      bind (f a) begin fun a' ->
-      bind (sensitive_list_map f l) begin fun l' ->
-      return (a'::l')
-      end
-      end
 
 
 (* Layer to implement v8.2 tactic engine ontop of the new architecture.

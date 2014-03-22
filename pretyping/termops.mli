@@ -6,7 +6,6 @@
 (*         *       GNU Lesser General Public License Version 2.1        *)
 (************************************************************************)
 
-open Util
 open Pp
 open Names
 open Term
@@ -29,6 +28,7 @@ val refresh_universes_strict : types -> types
 (** printers *)
 val print_sort : sorts -> std_ppcmds
 val pr_sort_family : sorts_family -> std_ppcmds
+val pr_fix : (constr -> std_ppcmds) -> fixpoint -> std_ppcmds
 
 (** debug printer: do not use to display terms to the casual user... *)
 val set_print_constr : (env -> constr -> std_ppcmds) -> unit

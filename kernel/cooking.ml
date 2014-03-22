@@ -17,13 +17,10 @@ open Errors
 open Util
 open Names
 open Term
-open Context
 open Declarations
 open Environ
 
 (*s Cooking the constants. *)
-
-type work_list = Id.t array Cmap.t * Id.t array Mindmap.t
 
 let pop_dirpath p = match DirPath.repr p with
   | [] -> anomaly ~label:"dirpath_prefix" (Pp.str "empty dirpath")
@@ -42,8 +39,25 @@ type my_global_reference =
   | IndRef of inductive
   | ConstructRef of constructor
 
+module RefHash =
+struct
+  type t = my_global_reference
+  let equal gr1 gr2 = match gr1, gr2 with
+  | ConstRef c1, ConstRef c2 -> Constant.CanOrd.equal c1 c2
+  | IndRef i1, IndRef i2 -> eq_ind i1 i2
+  | ConstructRef c1, ConstructRef c2 -> eq_constructor c1 c2
+  | _ -> false
+  open Hashset.Combine
+  let hash = function
+  | ConstRef c -> combinesmall 1 (Constant.hash c)
+  | IndRef i -> combinesmall 2 (ind_hash i)
+  | ConstructRef c -> combinesmall 3 (constructor_hash c)
+end
+
+module RefTable = Hashtbl.Make(RefHash)
+
 let share cache r (cstl,knl) =
-  try Hashtbl.find cache r
+  try RefTable.find cache r
   with Not_found ->
   let f,l =
     match r with
@@ -54,7 +68,7 @@ let share cache r (cstl,knl) =
     | ConstRef cst ->
 	mkConst (pop_con cst), Cmap.find cst cstl in
   let c = mkApp (f, Array.map mkVar l) in
-  Hashtbl.add cache r c;
+  RefTable.add cache r c;
   c
 
 let update_case_info cache ci modlist =
@@ -67,8 +81,6 @@ let update_case_info cache ci modlist =
     { ci with ci_ind = ind; ci_npar = ci.ci_npar + n }
   with Not_found ->
     ci
-
-let empty_modlist = (Cmap.empty, Mindmap.empty)
 
 let is_empty_modlist (cm, mm) =
   Cmap.is_empty cm && Mindmap.is_empty mm
@@ -111,35 +123,35 @@ let abstract_constant_type =
 let abstract_constant_body =
   List.fold_left (fun c d -> mkNamedLambda_or_LetIn d c)
 
-type recipe = {
-  d_from : constant_body;
-  d_abstract : named_context;
-  d_modlist : work_list }
-
+type recipe = { from : constant_body; info : Opaqueproof.cooking_info }
 type inline = bool
 
 type result =
-  constant_def * constant_type * constant_constraints * inline
+  constant_def * constant_type * Univ.constraints * inline
     * Context.section_context option
 
-let on_body f = function
+let on_body ml hy f = function
   | Undef _ as x -> x
-  | Def cs -> Def (Lazyconstr.from_val (f (Lazyconstr.force cs)))
-  | OpaqueDef lc ->
-    OpaqueDef (Future.chain ~pure:true lc (fun lc ->
-        (Lazyconstr.opaque_from_val (f (Lazyconstr.force_opaque lc)))))
+  | Def cs -> Def (Mod_subst.from_val (f (Mod_subst.force_constr cs)))
+  | OpaqueDef o ->
+    OpaqueDef (Opaqueproof.discharge_direct_opaque ~cook_constr:f
+                 { Opaqueproof.modlist = ml; abstract = hy } o)
 
 let constr_of_def = function
   | Undef _ -> assert false
-  | Def cs -> Lazyconstr.force cs
-  | OpaqueDef lc -> Lazyconstr.force_opaque (Future.force lc)
+  | Def cs -> Mod_subst.force_constr cs
+  | OpaqueDef lc -> Opaqueproof.force_proof lc
 
-let cook_constant env r =
-  let cache = Hashtbl.create 13 in
-  let cb = r.d_from in
-  let hyps = Context.map_named_context (expmod_constr cache r.d_modlist) r.d_abstract in
-  let body = on_body
-    (fun c -> abstract_constant_body (expmod_constr cache r.d_modlist c) hyps)
+let cook_constr { Opaqueproof.modlist ; abstract } c =
+  let cache = RefTable.create 13 in
+  let hyps = Context.map_named_context (expmod_constr cache modlist) abstract in
+  abstract_constant_body (expmod_constr cache modlist c) hyps
+
+let cook_constant env { from = cb; info = { Opaqueproof.modlist; abstract } } =
+  let cache = RefTable.create 13 in
+  let hyps = Context.map_named_context (expmod_constr cache modlist) abstract in
+  let body = on_body modlist hyps
+    (fun c -> abstract_constant_body (expmod_constr cache modlist c) hyps)
     cb.const_body
   in
   let const_hyps =
@@ -149,15 +161,15 @@ let cook_constant env r =
   let typ = match cb.const_type with
     | NonPolymorphicType t ->
 	let typ =
-          abstract_constant_type (expmod_constr cache r.d_modlist t) hyps in
+          abstract_constant_type (expmod_constr cache modlist t) hyps in
 	NonPolymorphicType typ
     | PolymorphicArity (ctx,s) ->
 	let t = mkArity (ctx,Type s.poly_level) in
 	let typ =
-          abstract_constant_type (expmod_constr cache r.d_modlist t) hyps in
+          abstract_constant_type (expmod_constr cache modlist t) hyps in
 	let j = make_judge (constr_of_def body) typ in
 	Typeops.make_polymorphic_if_constant_for_ind env j
   in
   (body, typ, cb.const_constraints, cb.const_inline_code, Some const_hyps)
 
-let expmod_constr modlist c = expmod_constr (Hashtbl.create 13) modlist c
+let expmod_constr modlist c = expmod_constr (RefTable.create 13) modlist c

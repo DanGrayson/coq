@@ -15,7 +15,6 @@
 
 (* This file provides with various operations on modules and module types *)
 
-open Errors
 open Util
 open Names
 open Term
@@ -283,7 +282,7 @@ let subst_structure subst = subst_structure subst do_delta_codom
 (* lclrk : retroknowledge_action list, rkaction : retroknowledge action *)
 let add_retroknowledge mp =
   let perform rkaction env = match rkaction with
-    |Retroknowledge.RKRegister (f, (Const _ | Ind _ as e)) ->
+    |Retroknowledge.RKRegister (f, e) when (isConst e || isInd e) ->
       Environ.register env f e
     |_ ->
       Errors.anomaly ~label:"Modops.add_retroknowledge"
@@ -345,7 +344,7 @@ let strengthen_const mp_from l cb resolver =
     let kn = KerName.make2 mp_from l in
     let con = constant_of_delta_kn resolver kn in
     { cb with
-      const_body = Def (Lazyconstr.from_val (mkConst con));
+      const_body = Def (Mod_subst.from_val (mkConst con));
       const_body_code = Cemitcodes.from_val (Cbytegen.compile_alias con) }
 
 let rec strengthen_mod mp_from mp_to mb =
@@ -407,7 +406,7 @@ let inline_delta_resolver env inl mp mbid mtb delta =
 	  match constant.const_body with
 	    | Undef _ | OpaqueDef _ -> l
 	    | Def body ->
-	      let constr = Lazyconstr.force body in
+	      let constr = Mod_subst.force_constr body in
 	      add_inline_delta_resolver kn (lev, Some constr) l
 	with Not_found ->
 	  error_no_such_label_sub (con_label con)

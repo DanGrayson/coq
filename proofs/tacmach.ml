@@ -6,7 +6,6 @@
 (*         *       GNU Lesser General Public License Version 2.1        *)
 (************************************************************************)
 
-open Errors
 open Util
 open Names
 open Namegen
@@ -102,8 +101,8 @@ let pf_hnf_type_of gls = compose (pf_whd_betadeltaiota gls) (pf_get_type_of gls)
 let pf_check_type gls c1 c2 =
   ignore (pf_type_of gls (mkCast (c1, DEFAULTcast, c2)))
 
-let pf_is_matching              = pf_apply Matching.is_matching_conv
-let pf_matches                  = pf_apply Matching.matches_conv
+let pf_is_matching              = pf_apply ConstrMatching.is_matching_conv
+let pf_matches                  = pf_apply ConstrMatching.matches_conv
 
 (************************************)
 (* Tactics handling a list of goals *)
@@ -205,7 +204,6 @@ let pr_glls glls =
 
 (* Variants of [Tacmach] functions built with the new proof engine *)
 module New = struct
-  open Proofview.Notations
 
   let pf_apply f gl =
     f (Proofview.Goal.env gl) (Proofview.Goal.sigma gl)
@@ -214,6 +212,8 @@ module New = struct
     f { Evd.it = Proofview.Goal.goal gl ; sigma = Proofview.Goal.sigma gl }
 
   let pf_global id gl =
+    (** We only check for the existence of an [id] in [hyps] *)
+    let gl = Proofview.Goal.assume gl in
     let hyps = Proofview.Goal.hyps gl in
     Constrintern.construct_reference hyps id
 
@@ -223,6 +223,8 @@ module New = struct
 
 
   let pf_ids_of_hyps gl =
+    (** We only get the identifiers in [hyps] *)
+    let gl = Proofview.Goal.assume gl in
     let hyps = Proofview.Goal.hyps gl in
     ids_of_named_context hyps
 
@@ -250,5 +252,12 @@ module New = struct
   let pf_last_hyp gl =
     let hyps = Proofview.Goal.hyps gl in
     List.hd hyps
+
+  let pf_nf_concl gl =
+    (** We normalize the conclusion just after *)
+    let gl = Proofview.Goal.assume gl in
+    let concl = Proofview.Goal.concl gl in
+    let sigma = Proofview.Goal.sigma gl in
+    nf_evar sigma concl
 
 end

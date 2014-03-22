@@ -849,7 +849,7 @@ type library_values = Nativecode.symbol array
 let library_values =
   Summary.ref (Dirmap.empty : library_values Dirmap.t) ~name:"LIBVALUES"
 
-let register_library dir cenv (objs:library_objects) digest =
+let register_library dir cenv (objs:library_objects) digest univ =
   let mp = MPfile dir in
   let () =
     try
@@ -857,7 +857,7 @@ let register_library dir cenv (objs:library_objects) digest =
       ignore(Global.lookup_module mp);
     with Not_found ->
       (* If not, let's do it now ... *)
-      let mp', values = Global.import cenv digest in
+      let mp', values = Global.import cenv univ digest in
       if not (ModPath.equal mp mp') then
         anomaly (Pp.str "Unexpected disk module name");
       library_values := Dirmap.add dir values !library_values
@@ -874,8 +874,8 @@ let start_library dir =
   Lib.add_frozen_state ()
 
 let end_library dir =
-  let prefix, lib_stack = Lib.end_compilation dir in
   let mp,cenv,ast = Global.export dir in
+  let prefix, lib_stack = Lib.end_compilation dir in
   assert (ModPath.equal mp (MPfile dir));
   let substitute, keep, _ = Lib.classify_segment lib_stack in
   cenv,(substitute,keep),ast

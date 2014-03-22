@@ -9,6 +9,16 @@
 (** A session is a script buffer + proof + messages,
     interacting with a coqtop, and a few other elements around *)
 
+class type ['a] page =
+  object
+    inherit GObj.widget
+    method update : 'a -> unit
+    method on_update : callback:('a -> unit) -> unit
+  end
+
+type errpage = (int * string) list page
+type jobpage = string Int.Map.t page
+
 type session = {
   buffer : GText.buffer;
   script : Wg_ScriptView.script_view;
@@ -20,6 +30,8 @@ type session = {
   command : Wg_Command.command_window;
   finder : Wg_Find.finder;
   tab_label : GMisc.label;
+  errpage : errpage;
+  jobpage : jobpage;
 }
 
 (** [create filename coqtop_args] *)

@@ -71,6 +71,7 @@ module PrintingInductiveMake =
   end) ->
   struct
     type t = inductive
+    let compare = ind_ord
     let encode = Test.encode
     let subst subst (kn, ints as obj) =
       let kn' = subst_ind subst kn in
@@ -684,7 +685,7 @@ let rec subst_glob_constr subst raw =
     | _ -> knd
     in
     let nsolve = Option.smartmap (Hook.get f_subst_genarg subst) solve in
-    if nsolve == solve && nknd = knd then raw
+    if nsolve == solve && nknd == knd then raw
     else GHole (loc, nknd, nsolve)
 
   | GCast (loc,r1,k) ->

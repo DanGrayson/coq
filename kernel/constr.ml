@@ -23,12 +23,8 @@
    Inductive Constructions (CIC) terms together with constructors,
    destructors, iterators and basic functions *)
 
-open Errors
 open Util
-open Pp
 open Names
-open Univ
-open Esubst
 
 
 type existential_key = Evar.t
@@ -328,8 +324,6 @@ let map f c = match kind c with
       let bl' = Array.smartmap f bl in
       if tl'==tl && bl'==bl then c
       else mkCoFix (ln,(lna,tl',bl'))
-
-exception Exit of int * constr
 
 (* [map_with_binders g f n c] maps [f n] on the immediate
    subterms of [c]; it carries an extra data [n] (typically a lift
@@ -715,22 +709,40 @@ let rec hash t =
 and hash_term_array t =
   Array.fold_left (fun acc t -> combine (hash t) acc) 0 t
 
-module Hcaseinfo =
-  Hashcons.Make(
-    struct
-      type t = case_info
-      type u = inductive -> inductive
-      let hashcons hind ci = { ci with ci_ind = hind ci.ci_ind }
-      let pp_info_equal info1 info2 =
-        Int.equal info1.ind_nargs info2.ind_nargs &&
-        info1.style == info2.style
-      let equal ci ci' =
-	ci.ci_ind == ci'.ci_ind &&
-	Int.equal ci.ci_npar ci'.ci_npar &&
-	Array.equal Int.equal ci.ci_cstr_ndecls ci'.ci_cstr_ndecls && (* we use [Array.equal] on purpose *)
-	pp_info_equal ci.ci_pp_info ci'.ci_pp_info  (* we use (=) on purpose *)
-      let hash = Hashtbl.hash
-    end)
+module CaseinfoHash =
+struct
+  type t = case_info
+  type u = inductive -> inductive
+  let hashcons hind ci = { ci with ci_ind = hind ci.ci_ind }
+  let pp_info_equal info1 info2 =
+    Int.equal info1.ind_nargs info2.ind_nargs &&
+    info1.style == info2.style
+  let equal ci ci' =
+    ci.ci_ind == ci'.ci_ind &&
+    Int.equal ci.ci_npar ci'.ci_npar &&
+    Array.equal Int.equal ci.ci_cstr_ndecls ci'.ci_cstr_ndecls && (* we use [Array.equal] on purpose *)
+    pp_info_equal ci.ci_pp_info ci'.ci_pp_info  (* we use (=) on purpose *)
+  open Hashset.Combine
+  let hash_pp_info info =
+    let h = match info.style with
+    | LetStyle -> 0
+    | IfStyle -> 1
+    | LetPatternStyle -> 2
+    | MatchStyle -> 3
+    | RegularStyle -> 4
+    in
+    combine info.ind_nargs h
+  let hash ci =
+    let h1 = ind_hash ci.ci_ind in
+    let h2 = Int.hash ci.ci_npar in
+    let h3 = Array.fold_left combine 0 ci.ci_cstr_ndecls in
+    let h4 = hash_pp_info ci.ci_pp_info in
+    combine4 h1 h2 h3 h4
+end
+
+module Hcaseinfo = Hashcons.Make(CaseinfoHash)
+
+let case_info_hash = CaseinfoHash.hash
 
 let hcons_caseinfo = Hashcons.simple_hcons Hcaseinfo.generate hcons_ind
 

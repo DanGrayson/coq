@@ -19,7 +19,7 @@ open Tacexpr
     those of {!Matching.matching_result}), and a {!Term.constr}
     substitution mapping corresponding to matched hypotheses. *)
 type 'a t = {
-  subst : Matching.bound_ident_map * Pattern.extended_patvar_map ;
+  subst : ConstrMatching.bound_ident_map * Pattern.extended_patvar_map ;
   context : Term.constr Id.Map.t;
   terms : Term.constr Id.Map.t;
   lhs : 'a;
@@ -33,9 +33,9 @@ type 'a t = {
 (** Some of the functions of {!Matching} return the substitution with a
     [patvar_map] instead of an [extended_patvar_map]. [adjust] coerces
     substitution of the former type to the latter. *)
-let adjust : Matching.bound_ident_map * Pattern.patvar_map ->
-             Matching.bound_ident_map * Pattern.extended_patvar_map = fun (l, lc) ->
-  (l, Id.Map.map (fun c -> [], c) lc)
+let adjust : ConstrMatching.bound_ident_map * Pattern.patvar_map ->
+             ConstrMatching.bound_ident_map * Pattern.extended_patvar_map =
+  fun (l, lc) -> (l, Id.Map.map (fun c -> [], c) lc)
 
 
 (** Adds a binding to a {!Id.Map.t} if the identifier is [Some id] *)
@@ -167,10 +167,10 @@ module PatternMatching (E:StaticEnvironment) = struct
       coherent. *)
   let (>>=) (type a) (type b) (x:a m) (f:a -> b m) : b m =
     let open IStream in
-    concat (map begin fun { subst=substx; context=contextx; terms=termsx; lhs=lhsx } ->
+    concat_map begin fun { subst=substx; context=contextx; terms=termsx; lhs=lhsx } ->
       map_filter begin fun { subst=substf; context=contextf; terms=termsf; lhs=lhsf } ->
-        try 
-          Some { 
+        try
+          Some {
             subst = subst_prod substx substf ;
             context = context_subst_prod contextx contextf ;
             terms = term_subst_prod termsx termsf ;
@@ -178,11 +178,23 @@ module PatternMatching (E:StaticEnvironment) = struct
           }
         with Not_coherent_metas -> None
       end (f lhsx)
-    end x)
+    end x
 
   (** A variant of [(>>=)] when the first argument returns [unit]. *)
   let (<*>) (type a) (x:unit m) (y:a m) : a m =
-    x >>= fun () -> y
+    let open IStream in
+    concat_map begin fun { subst=substx; context=contextx; terms=termsx; lhs=() } ->
+      map_filter begin fun { subst=substy; context=contexty; terms=termsy; lhs=lhsy } ->
+        try
+          Some {
+            subst = subst_prod substx substy ;
+            context = context_subst_prod contextx contexty ;
+            terms = term_subst_prod termsx termsy ;
+            lhs = lhsy
+          }
+        with Not_coherent_metas -> None
+      end y
+    end x
 
   (** Failure of the pattern-matching monad: no success. *)
   let fail (type a) : a m = IStream.empty
@@ -202,9 +214,6 @@ module PatternMatching (E:StaticEnvironment) = struct
 
   (** Declares a substitution. *)
   let put_subst subst : unit m = put subst empty_context_subst empty_term_subst
-
-  (** Declares a context substitution. *)
-  let put_context context : unit m = put empty_subst context empty_term_subst
 
   (** Declares a term substitution. *)
   let put_terms terms : unit m = put empty_subst empty_context_subst terms
@@ -228,19 +237,19 @@ module PatternMatching (E:StaticEnvironment) = struct
     | Term p ->
         begin 
           try
-            put_subst (Matching.extended_matches p term) <*>
+            put_subst (ConstrMatching.extended_matches p term) <*>
             return lhs
-          with Matching.PatternMatchingFailure -> fail
+          with ConstrMatching.PatternMatchingFailure -> fail
         end
     | Subterm (with_app_context,id_ctxt,p) ->
         (* spiwack: this branch is easier in direct style, would need to be
            changed if the implementation of the monad changes. *)
-        IStream.map begin fun { Matching.m_sub ; m_ctx } ->
+        IStream.map begin fun { ConstrMatching.m_sub ; m_ctx } ->
           let subst = adjust m_sub in
           let context = id_map_try_add id_ctxt m_ctx Id.Map.empty in
           let terms = empty_term_subst in
           { subst ; context ; terms ; lhs }
-        end (Matching.match_subterm_gen with_app_context p term)
+        end (ConstrMatching.match_subterm_gen with_app_context p term)
 
 
   (** [rule_match_term term rule] matches the term [term] with the

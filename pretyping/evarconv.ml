@@ -23,24 +23,15 @@ open Globnames
 open Evd
 open Pretype_errors
 
-type flex_kind_of_term =
-  | Rigid
-  | MaybeFlexible (* approx'ed as reducible but not necessarily so *)
-  | Flexible of existential
-
-let flex_kind_of_term c sk =
-  match kind_of_term c with
-    | Rel _ | Const _ | Var _ -> MaybeFlexible
-    | Lambda _ when not (Option.is_empty (decomp_stack sk)) -> MaybeFlexible
-    | LetIn _  -> MaybeFlexible
-    | Evar ev -> Flexible ev
-    | Lambda _ | Prod _ | Sort _ | Ind _ | Construct _ | CoFix _ -> Rigid
-    | Meta _ -> Rigid
-    | Fix _ -> Rigid (* happens when the fixpoint is partially applied *)
-    | Cast _ | App _ | Case _ -> assert false
-
-let not_purely_applicative_stack args =
-  List.exists (function (Zfix _ | Zcase _) -> true | _ -> false) args
+let debug_unification = ref (false)
+let _ = Goptions.declare_bool_option {
+  Goptions.optsync = true; Goptions.optdepr = false;
+  Goptions.optname =
+    "Print states sended to Evarconv unification";
+  Goptions.optkey = ["Debug";"Unification"];
+  Goptions.optread = (fun () -> !debug_unification);
+  Goptions.optwrite = (fun a -> debug_unification:=a);
+}
 
 let eval_flexible_term ts env c =
   match kind_of_term c with
@@ -61,10 +52,26 @@ let eval_flexible_term ts env c =
   | Lambda _ -> Some c
   | _ -> assert false
 
+type flex_kind_of_term =
+  | Rigid
+  | MaybeFlexible of Constr.t (* reducible but not necessarily reduced *)
+  | Flexible of existential
+
+let flex_kind_of_term ts env c sk =
+  match kind_of_term c with
+    | LetIn _ | Rel _ | Const _ | Var _ ->
+      Option.cata (fun x -> MaybeFlexible x) Rigid (eval_flexible_term ts env c)
+    | Lambda _ when not (Option.is_empty (Stack.decomp sk)) -> MaybeFlexible c
+    | Evar ev -> Flexible ev
+    | Lambda _ | Prod _ | Sort _ | Ind _ | Construct _ | CoFix _ -> Rigid
+    | Meta _ -> Rigid
+    | Fix _ -> Rigid (* happens when the fixpoint is partially applied *)
+    | Cast _ | App _ | Case _ -> assert false
+
 let apprec_nohdbeta ts env evd c =
   let (t,sk as appr) = Reductionops.whd_nored_state evd (c, []) in
-  if not_purely_applicative_stack (snd (Reductionops.strip_app sk))
-  then zip (fst (whd_betaiota_deltazeta_for_iota_state
+  if Stack.not_purely_applicative sk
+  then Stack.zip (fst (whd_betaiota_deltazeta_for_iota_state
 		   ts env evd Cst_stack.empty appr))
   else c
 
@@ -93,37 +100,36 @@ let position_problem l2r = function
    projection would have been reduced) *)
 
 let check_conv_record (t1,sk1) (t2,sk2) =
-  try
     let proji = global_of_constr t1 in
     let canon_s,sk2_effective =
       try
 	match kind_of_term t2 with
-	    Prod (_,a,b) -> (* assert (l2=[]); *)
-      	      if dependent (mkRel 1) b then raise Not_found
-	      else lookup_canonical_conversion (proji, Prod_cs),[Zapp [a;pop b]]
-	  | Sort s ->
-	      lookup_canonical_conversion
-		(proji, Sort_cs (family_of_sort s)),[]
-	  | _ ->
-	      let c2 = global_of_constr t2 in
-		lookup_canonical_conversion (proji, Const_cs c2),sk2
+	  Prod (_,a,b) -> (* assert (l2=[]); *)
+      	  if dependent (mkRel 1) b then raise Not_found
+	  else lookup_canonical_conversion (proji, Prod_cs),(Stack.append_app [|a;pop b|] Stack.empty)
+	| Sort s ->
+	   lookup_canonical_conversion
+	     (proji, Sort_cs (family_of_sort s)),[]
+	| _ ->
+	   let c2 = global_of_constr t2 in
+	   lookup_canonical_conversion (proji, Const_cs c2),sk2
       with Not_found ->
 	lookup_canonical_conversion (proji,Default_cs),[]
     in
     let { o_DEF = c; o_INJ=n; o_TABS = bs;
           o_TPARAMS = params; o_NPARAMS = nparams; o_TCOMPS = us } = canon_s in
     let params1, c1, extra_args1 =
-      match strip_n_app nparams sk1 with
-	| Some (params1, c1,extra_args1) -> params1, c1, extra_args1
-	| _ -> raise Not_found in
+      match Stack.strip_n_app nparams sk1 with
+      | Some (params1, c1,extra_args1) -> params1, c1, extra_args1
+      | _ -> raise Not_found in
     let us2,extra_args2 =
-      let l',s' = strip_app sk2_effective in
-      let bef,aft = List.chop (List.length us) l' in
-      (bef, append_stack_app_list aft s') in
-    c,bs,(params,params1),(us,us2),(extra_args1,extra_args2),c1,
-    (n,zip(t2,sk2))
-  with Failure _ | Not_found ->
-    raise Not_found
+      let l_us = List.length us in
+      if Int.equal l_us 0 then Stack.empty,sk2_effective
+      else match (Stack.strip_n_app (l_us-1) sk2_effective) with
+	   | None -> raise Not_found
+	   | Some (l',el,s') -> (l'@Stack.append_app [|el|] Stack.empty,s') in
+    (c,bs,(Stack.append_app_list params Stack.empty,params1),(Stack.append_app_list us Stack.empty,us2),(extra_args1,extra_args2),c1,
+    (n,Stack.zip(t2,sk2)))
 
 (* Precondition: one of the terms of the pb is an uninstantiated evar,
  * possibly applied to arguments. *)
@@ -159,22 +165,6 @@ let ise_exact ise x1 x2 =
   | _, (UnifFailure _ as out) -> out
   | Some _, Success i -> UnifFailure (i,NotSameArgSize)
 
-let generic_ise_list2 i f l1 l2 =
-  let rec aux i l1 l2 =
-    match l1,l2 with
-    | [], [] -> (None, Success i)
-    | l, [] -> (Some (Inl (List.rev l)), Success i)
-    | [], l -> (Some (Inr (List.rev l)), Success i)
-    | x::l1, y::l2 ->
-        (match aux i l1 l2 with
-        | aa, Success i' -> (aa, f i' x y)
-        | _, (UnifFailure _ as x) -> None, x)
-  in aux i (List.rev l1) (List.rev l2)
-
-(* Same but the 2 lists must have the same length *)
-let ise_list2 evd f l1 l2 =
-  ise_exact (generic_ise_list2 evd f) l1 l2
-
 let ise_array2 evd f v1 v2 =
   let rec allrec i = function
     | -1 -> Success i
@@ -186,6 +176,19 @@ let ise_array2 evd f v1 v2 =
   if Int.equal lv1 (Array.length v2) then allrec evd (pred lv1)
   else UnifFailure (evd,NotSameArgSize)
 
+(* Applicative node of stack are read from the outermost to the innermost
+   but are unified the other way. *)
+let rec ise_app_stack2 env f evd sk1 sk2 =
+  match sk1,sk2 with
+  | Stack.App node1 :: q1, Stack.App node2 :: q2 ->
+     let (t1,l1) = Stack.decomp_node_last node1 q1 in
+     let (t2,l2) = Stack.decomp_node_last node2 q2 in
+     begin match ise_app_stack2 env f evd l1 l2 with
+	   |(_,UnifFailure _) as x -> x
+	   |x,Success i' -> x,f env i' CONV t1 t2
+     end
+  | _, _ -> (sk1,sk2), Success evd
+
 (* This function tries to unify 2 stacks element by element. It works
    from the end to the beginning. If it unifies a non empty suffix of
    stacks but not the entire stacks, the first part of the answer is
@@ -196,14 +199,15 @@ let ise_stack2 no_app env evd f sk1 sk2 =
       else None, x in
     match sk1, sk2 with
     | [], [] -> None, Success i
-    | Zcase (_,t1,c1,_)::q1, Zcase (_,t2,c2,_)::q2 ->
+    | Stack.Case (_,t1,c1,_)::q1, Stack.Case (_,t2,c2,_)::q2 ->
       (match f env i CONV t1 t2 with
       | Success i' ->
 	(match ise_array2 i' (fun ii -> f env ii CONV) c1 c2 with
 	| Success i'' -> ise_stack2 true i'' q1 q2
         | UnifFailure _ as x -> fail x)
       | UnifFailure _ as x -> fail x)
-    | Zfix (((li1, i1),(_,tys1,bds1 as recdef1)),a1,_)::q1, Zfix (((li2, i2),(_,tys2,bds2)),a2,_)::q2 ->
+    | Stack.Fix (((li1, i1),(_,tys1,bds1 as recdef1)),a1,_)::q1,
+      Stack.Fix (((li2, i2),(_,tys2,bds2)),a2,_)::q2 ->
       if Int.equal i1 i2 && Array.equal Int.equal li1 li2 then
         match ise_and i [
 	  (fun i -> ise_array2 i (fun ii -> f env ii CONV) tys1 tys2);
@@ -212,28 +216,47 @@ let ise_stack2 no_app env evd f sk1 sk2 =
         | Success i' -> ise_stack2 true i' q1 q2
         | UnifFailure _ as x -> fail x
       else fail (UnifFailure (i,NotSameHead))
-    | Zupdate _ :: _, _ | Zshift _ :: _, _
-    | _, Zupdate _ :: _ | _, Zshift _ :: _ -> assert false
-    | Zapp l1 :: q1, Zapp l2 :: q2 ->
-      if no_app&&deep then fail ((*dummy*)UnifFailure(i,NotSameHead)) else begin
-      (* Is requiring to match on all the shorter list a restriction
-	 here ? we could imagine a generalization of
-	 generic_ise_list2 that succeed when it matches only a strict
-	 non empty suffix of both lists and returns in this case the 2
-	 prefixes *)
-      match generic_ise_list2 i (fun ii -> f env ii CONV) l1 l2 with
-      |_,(UnifFailure _ as x) -> fail x
-      |None,Success i' -> ise_stack2 true i' q1 q2
-      |Some (Inl r),Success i' -> ise_stack2 true i' (Zapp r :: q1) q2
-      |Some (Inr r),Success i' -> ise_stack2 true i' q1 (Zapp r :: q2)
-    end
+    | Stack.Update _ :: _, _ | Stack.Shift _ :: _, _
+    | _, Stack.Update _ :: _ | _, Stack.Shift _ :: _ -> assert false
+    | Stack.App _ :: _, Stack.App _ :: _ ->
+       if no_app && deep then fail ((*dummy*)UnifFailure(i,NotSameHead)) else
+	 begin match ise_app_stack2 env f i sk1 sk2 with
+	       |_,(UnifFailure _ as x) -> fail x
+	       |(l1, l2), Success i' -> ise_stack2 true i' l1 l2
+	 end
     |_, _ -> fail (UnifFailure (i,(* Maybe improve: *) NotSameHead))
   in ise_stack2 false evd (List.rev sk1) (List.rev sk2)
 
 (* Make sure that the matching suffix is the all stack *)
 let exact_ise_stack2 env evd f sk1 sk2 =
-  if Reductionops.compare_stack_shape sk1 sk2 then
-    ise_exact (ise_stack2 false env evd f) sk1 sk2
+  let rec ise_stack2 i sk1 sk2 =
+    match sk1, sk2 with
+    | [], [] -> Success i
+    | Stack.Case (_,t1,c1,_)::q1, Stack.Case (_,t2,c2,_)::q2 ->
+      ise_and i [
+      (fun i -> ise_stack2 i q1 q2);
+      (fun i -> ise_array2 i (fun ii -> f env ii CONV) c1 c2);
+      (fun i -> f env i CONV t1 t2)]
+    | Stack.Fix (((li1, i1),(_,tys1,bds1 as recdef1)),a1,_)::q1,
+      Stack.Fix (((li2, i2),(_,tys2,bds2)),a2,_)::q2 ->
+      if Int.equal i1 i2 && Array.equal Int.equal li1 li2 then
+	ise_and i [
+	  (fun i -> ise_stack2 i q1 q2);
+	  (fun i -> ise_array2 i (fun ii -> f env ii CONV) tys1 tys2);
+	  (fun i -> ise_array2 i (fun ii -> f (push_rec_types recdef1 env) ii CONV) bds1 bds2);
+	  (fun i -> ise_stack2 i a1 a2)]
+      else UnifFailure (i,NotSameHead)
+    | Stack.Update _ :: _, _ | Stack.Shift _ :: _, _
+    | _, Stack.Update _ :: _ | _, Stack.Shift _ :: _ -> assert false
+    | Stack.App _ :: _, Stack.App _ :: _ ->
+	 begin match ise_app_stack2 env f i sk1 sk2 with
+	       |_,(UnifFailure _ as x) -> x
+	       |(l1, l2), Success i' -> ise_stack2 i' l1 l2
+	 end
+    |_, _ -> UnifFailure (i,(* Maybe improve: *) NotSameHead)
+  in
+  if Reductionops.Stack.compare_shape sk1 sk2 then
+    ise_stack2 evd (List.rev sk1) (List.rev sk2)
   else UnifFailure (evd, (* Dummy *) NotSameHead)
 
 let rec evar_conv_x ts env evd pbty term1 term2 =
@@ -266,75 +289,94 @@ let rec evar_conv_x ts env evd pbty term1 term2 =
             (position_problem false pbty,ev,term1)
         | _ ->
           evar_eqappr_x ts env evd pbty
-            (whd_nored_state evd (term1,empty_stack), Cst_stack.empty)
-            (whd_nored_state evd (term2,empty_stack), Cst_stack.empty)
+            (whd_nored_state evd (term1,Stack.empty), Cst_stack.empty)
+            (whd_nored_state evd (term2,Stack.empty), Cst_stack.empty)
         end
 
 and evar_eqappr_x ?(rhs_is_already_stuck = false) ts env evd pbty
     ((term1,sk1 as appr1),csts1) ((term2,sk2 as appr2),csts2) =
   let default_fail i = (* costly *)
-    UnifFailure (i,ConversionFailed (env, zip appr1, zip appr2)) in
-  let miller_pfenning on_left fallback ev (_,skF) apprM evd =
-    let tM = zip apprM in
-    match list_of_app_stack skF with
-    | None -> default_fail evd
-    | Some lF -> match is_unification_pattern_evar env evd ev lF tM with
+    UnifFailure (i,ConversionFailed (env, Stack.zip appr1, Stack.zip appr2)) in
+  let miller_pfenning on_left fallback ev lF apprM evd =
+    let tM = Stack.zip apprM in
+    match is_unification_pattern_evar env evd ev lF tM with
       | None -> fallback ()
       | Some l1' -> (* Miller-Pfenning's patterns unification *)
 	let t2 = nf_evar evd tM in
 	let t2 = solve_pattern_eqn env l1' t2 in
 	solve_simple_eqn (evar_conv_x ts) env evd
 	  (position_problem on_left pbty,ev,t2) in
-  let flex_maybeflex on_left ev ((termF,skF as apprF),cstsF) ((termM, skM as apprM),cstsM) =
+  let consume_stack on_left (termF,skF) (termO,skO) evd =
     let switch f a b = if on_left then f a b else f b a in
-    let not_only_app = not_purely_applicative_stack skM in
-    let f1 i = miller_pfenning on_left
-      (fun () -> if not_only_app then (* Postpone the use of an heuristic *)
-	switch (fun x y -> Success (add_conv_pb (pbty,env,zip x,zip y) i)) apprF apprM
-       else default_fail i)
-      ev apprF apprM i
-    and f2 i =
-      match switch (ise_stack2 not_only_app env i (evar_conv_x ts)) skF skM with
+    let not_only_app = Stack.not_purely_applicative skO in
+    match switch (ise_stack2 not_only_app env evd (evar_conv_x ts)) skF skO with
       |Some (l,r), Success i' when on_left && (not_only_app || List.is_empty l) ->
-	switch (evar_conv_x ts env i' pbty) (zip(termF,l)) (zip(termM,r))
+	switch (evar_conv_x ts env i' pbty) (Stack.zip(termF,l)) (Stack.zip(termO,r))
       |Some (r,l), Success i' when not on_left && (not_only_app || List.is_empty l) ->
-	switch (evar_conv_x ts env i' pbty) (zip(termF,l)) (zip(termM,r))
-      |None, Success i' -> switch (evar_conv_x ts env i' pbty) termF termM
+	switch (evar_conv_x ts env i' pbty) (Stack.zip(termF,l)) (Stack.zip(termO,r))
+      |None, Success i' -> switch (evar_conv_x ts env i' pbty) termF termO
       |_, (UnifFailure _ as x) -> x
-      |Some _, _ -> UnifFailure (i,NotSameArgSize)
-    and f3 i =
-      match eval_flexible_term ts env termM with
-      | Some vM ->
-	switch (evar_eqappr_x ts env i pbty) (apprF,cstsF)
-	  (whd_betaiota_deltazeta_for_iota_state ts env i cstsM (vM, skM))
-      | None -> UnifFailure (i,NotSameHead)
-    in
-    ise_try evd [f1; f2; f3] in
+      |Some _, _ -> UnifFailure (evd,NotSameArgSize) in
   let eta env evd onleft sk term sk' term' =
     assert (match sk with [] -> true | _ -> false);
     let (na,c1,c'1) = destLambda term in
     let c = nf_evar evd c1 in
     let env' = push_rel (na,None,c) env in
     let out1 = whd_betaiota_deltazeta_for_iota_state
-      ts env' evd Cst_stack.empty (c'1, empty_stack) in
+      ts env' evd Cst_stack.empty (c'1, Stack.empty) in
     let out2 = whd_nored_state evd
-      (zip (term', sk' @ [Zshift 1]), [Zapp [mkRel 1]]), Cst_stack.empty in
+      (Stack.zip (term', sk' @ [Stack.Shift 1]), Stack.append_app [|mkRel 1|] Stack.empty), Cst_stack.empty in
     if onleft then evar_eqappr_x ts env' evd CONV out1 out2
     else evar_eqappr_x ts env' evd CONV out2 out1
   in
+  let flex_maybeflex on_left ev ((termF,skF as apprF),cstsF) ((termM, skM as apprM),cstsM) vM =
+    let switch f a b = if on_left then f a b else f b a in
+    let not_only_app = Stack.not_purely_applicative skM in
+    let f1 i =
+      match Stack.list_of_app_stack skF with
+	| None -> default_fail evd
+	| Some lF ->  miller_pfenning on_left
+	  (fun () -> if not_only_app then (* Postpone the use of an heuristic *)
+	      switch (fun x y -> Success (add_conv_pb (pbty,env,Stack.zip x,Stack.zip y) i)) apprF apprM
+	    else default_fail i)
+	  ev lF apprM i
+    and f3 i =
+	switch (evar_eqappr_x ts env i pbty) (apprF,cstsF)
+	  (whd_betaiota_deltazeta_for_iota_state ts env i cstsM (vM, skM))
+    in
+    ise_try evd [f1; (consume_stack on_left apprF apprM); f3] in
+  let flex_rigid on_left ev (termF, skF as apprF) (termR, skR as apprR) =
+    let switch f a b = if on_left then f a b else f b a in
+    match Stack.list_of_app_stack skF with
+      | None -> consume_stack on_left apprF apprR evd
+      | Some lF ->
+	let f1 evd =
+	  miller_pfenning on_left
+	    (fun () -> (* Postpone the use of an heuristic *)
+	      switch (fun x y ->
+		Success (add_conv_pb (pbty,env,Stack.zip x,Stack.zip y) evd)) apprF apprR)
+	    ev lF apprR evd
+	and f2 evd =
+	  if isLambda termR then
+	    eta env evd false skR termR skF termF
+	  else UnifFailure (evd,NotSameHead)
+	in ise_try evd [f1;f2] in
 
   let app_empty = match sk1, sk2 with [], [] -> true | _ -> false in
   (* Evar must be undefined since we have flushed evars *)
-  match (flex_kind_of_term term1 sk1, flex_kind_of_term term2 sk2) with
+  let () = if !debug_unification then
+	     let open Pp in
+	     pp (v 0 (pr_state appr1 ++ cut () ++ pr_state appr2 ++ cut ()) ++ fnl ()) in
+  match (flex_kind_of_term ts env term1 sk1, flex_kind_of_term ts env term2 sk2) with
     | Flexible (sp1,al1 as ev1), Flexible (sp2,al2 as ev2) ->
 	let f1 i =
 	  match ise_stack2 false env i (evar_conv_x ts) sk1 sk2 with
 	  |None, Success i' -> solve_simple_eqn (evar_conv_x ts) env i'
 	    (position_problem true pbty,ev1,term2)
 	  |Some (r,[]), Success i' -> solve_simple_eqn (evar_conv_x ts) env i'
-	    (position_problem false pbty,ev2,zip(term1,r))
+	    (position_problem false pbty,ev2,Stack.zip(term1,r))
 	  |Some ([],r), Success i' -> solve_simple_eqn (evar_conv_x ts) env i'
-	          (position_problem true pbty,ev1,zip(term2,r))
+	          (position_problem true pbty,ev1,Stack.zip(term2,r))
 	  |_, (UnifFailure _ as x) -> x
 	  |Some _, _ -> UnifFailure (i,NotSameArgSize)
 	and f2 i =
@@ -350,11 +392,11 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) ts env evd pbty
 	in
 	ise_try evd [f1; f2]
 
-    | Flexible ev1, MaybeFlexible -> flex_maybeflex true ev1 (appr1,csts1) (appr2,csts2)
+    | Flexible ev1, MaybeFlexible v2 -> flex_maybeflex true ev1 (appr1,csts1) (appr2,csts2) v2
 
-    | MaybeFlexible, Flexible ev2 -> flex_maybeflex false ev2 (appr2,csts2) (appr1,csts1)
+    | MaybeFlexible v1, Flexible ev2 -> flex_maybeflex false ev2 (appr2,csts2) (appr1,csts1) v1
 
-    | MaybeFlexible, MaybeFlexible -> begin
+    | MaybeFlexible v1, MaybeFlexible v2 -> begin
         match kind_of_term term1, kind_of_term term2 with
         | LetIn (na,b1,t1,c'1), LetIn (_,b2,_,c'2) ->
         let f1 i =
@@ -366,8 +408,8 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) ts env evd pbty
 	       evar_conv_x ts (push_rel (na,Some b,t) env) i pbty c'1 c'2);
 	     (fun i -> exact_ise_stack2 env i (evar_conv_x ts) sk1 sk2)]
 	and f2 i =
-          let out1 = whd_betaiota_deltazeta_for_iota_state ts env i csts1 ((subst1 b1 c'1),sk1)
-          and out2 = whd_betaiota_deltazeta_for_iota_state ts env i csts2 ((subst1 b2 c'2),sk2)
+          let out1 = whd_betaiota_deltazeta_for_iota_state ts env i csts1 (v1,sk1)
+          and out2 = whd_betaiota_deltazeta_for_iota_state ts env i csts2 (v2,sk2)
 	  in evar_eqappr_x ts env i pbty out1 out2
 	in
 	ise_try evd [f1; f2]
@@ -390,9 +432,9 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) ts env evd pbty
              usable as a canonical projection or canonical value *)
           let rec is_unnamed (hd, args) = match kind_of_term hd with
             | (Var _|Construct _|Ind _|Const _|Prod _|Sort _) ->
-	      not_purely_applicative_stack args
+	      Stack.not_purely_applicative args
             | (CoFix _|Meta _|Rel _)-> true
-            | Evar _ -> not_purely_applicative_stack args
+            | Evar _ -> Stack.not_purely_applicative args
 	    (* false (* immediate solution without Canon Struct *)*)
             | Lambda _ -> assert (match args with [] -> true | _ -> false); true
             | LetIn (_,b,_,c) -> is_unnamed
@@ -400,47 +442,25 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) ts env evd pbty
 		      ts env i Cst_stack.empty (subst1 b c, args)))
             | Case _| Fix _| App _| Cast _ -> assert false in
           let rhs_is_stuck_and_unnamed () =
-            match eval_flexible_term ts env term2 with
-            | None -> false
-            | Some v2 ->
-	      let applicative_stack = append_stack_app_list (fst (strip_app sk2)) empty_stack in
-	      is_unnamed
-		(fst (whd_betaiota_deltazeta_for_iota_state
-			ts env i Cst_stack.empty (v2, applicative_stack))) in
+	    let applicative_stack = fst (Stack.strip_app sk2) in
+	    is_unnamed
+	      (fst (whd_betaiota_deltazeta_for_iota_state
+		      ts env i Cst_stack.empty (v2, applicative_stack))) in
           let rhs_is_already_stuck =
             rhs_is_already_stuck || rhs_is_stuck_and_unnamed () in
 	  if (isLambda term1 || rhs_is_already_stuck)
-	    && (not (not_purely_applicative_stack sk1)) then
-	    match eval_flexible_term ts env term1 with
-	    | Some v1 ->
-	      evar_eqappr_x ~rhs_is_already_stuck ts env i pbty
-		(whd_betaiota_deltazeta_for_iota_state
-		   ts env i (Cst_stack.add_cst term1 csts1) (v1,sk1))
-		(appr2,csts2)
-	    | None ->
-		match eval_flexible_term ts env term2 with
-		| Some v2 ->
-		    evar_eqappr_x ts env i pbty (appr1,csts1)
-		      (whd_betaiota_deltazeta_for_iota_state
-			 ts env i (Cst_stack.add_cst term2 csts2) (v2,sk2))
-		| None -> UnifFailure (i,NotSameHead)
+	    && (not (Stack.not_purely_applicative sk1)) then
+	    evar_eqappr_x ~rhs_is_already_stuck ts env i pbty
+	      (whd_betaiota_deltazeta_for_iota_state
+		 ts env i (Cst_stack.add_cst term1 csts1) (v1,sk1))
+	      (appr2,csts2)
 	  else
-	    match eval_flexible_term ts env term2 with
-	    | Some v2 ->
-	      evar_eqappr_x ts env i pbty (appr1,csts1)
-		(whd_betaiota_deltazeta_for_iota_state
-		   ts env i (Cst_stack.add_cst term2 csts2) (v2,sk2))
-	    | None ->
-		match eval_flexible_term ts env term1 with
-		| Some v1 ->
-		  evar_eqappr_x ts env i pbty
-		    (whd_betaiota_deltazeta_for_iota_state
-		       ts env i (Cst_stack.add_cst term1 csts1) (v1,sk1))
-		    (appr2,csts2)
-		| None -> UnifFailure (i,NotSameHead)
+	    evar_eqappr_x ts env i pbty (appr1,csts1)
+	      (whd_betaiota_deltazeta_for_iota_state
+		 ts env i (Cst_stack.add_cst term2 csts2) (v2,sk2))
 	in
 	ise_try evd [f1; f2; f3]
-      end
+    end
 
     | Rigid, Rigid when isLambda term1 && isLambda term2 ->
         let (na,c1,c'1) = destLambda term1 in
@@ -452,60 +472,29 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) ts env evd pbty
 	     let c = nf_evar i c1 in
 	     evar_conv_x ts (push_rel (na,None,c) env) i CONV c'1 c'2)]
 
-    | Flexible ev1, Rigid ->
-      let f1 evd =
-	miller_pfenning true
-	(fun () -> Success ((* Postpone the use of an heuristic *)
-	  add_conv_pb (pbty,env,zip appr1,zip appr2) evd))
-	ev1 appr1 appr2 evd
-      and f2 evd =
-	if isLambda term2 then
-	  eta env evd false sk2 term2 sk1 term1
-	else UnifFailure (evd,NotSameHead)
-      in ise_try evd [f1;f2]
+    | Flexible ev1, Rigid -> flex_rigid true ev1 appr1 appr2
+    | Rigid, Flexible ev2 -> flex_rigid false ev2 appr2 appr1
 
-    | Rigid, Flexible ev2 ->
-      let f1 evd =
-	miller_pfenning false
-	  (fun () -> Success ((* Postpone the use of an heuristic *)
-	     add_conv_pb (pbty,env,zip appr1,zip appr2) evd))
-	ev2 appr2 appr1 evd
-      and f2 evd =
-	if isLambda term1 then
-	  eta env evd true sk1 term1 sk2 term2
-	else UnifFailure (evd,NotSameHead)
-      in ise_try evd [f1;f2]
-
-    | MaybeFlexible, Rigid ->
+    | MaybeFlexible v1, Rigid ->
 	let f3 i =
 	  (try conv_record ts env i (check_conv_record appr1 appr2)
            with Not_found -> UnifFailure (i,NoCanonicalStructure))
 	and f4 i =
-	  match eval_flexible_term ts env term1 with
-	    | Some v1 ->
-		evar_eqappr_x ts env i pbty
-		  (whd_betaiota_deltazeta_for_iota_state
-		     ts env i (Cst_stack.add_cst term1 csts1) (v1,sk1))
-		  (appr2,csts2)
-	    | None ->
-	      if isLambda term2 then eta env evd false sk2 term2 sk1 term1
-	      else UnifFailure (i,NotSameHead)
+	  evar_eqappr_x ts env i pbty
+	    (whd_betaiota_deltazeta_for_iota_state
+	       ts env i (Cst_stack.add_cst term1 csts1) (v1,sk1))
+	    (appr2,csts2)
 	in
 	  ise_try evd [f3; f4]
 
-    | Rigid, MaybeFlexible ->
+    | Rigid, MaybeFlexible v2 ->
 	let f3 i =
 	  (try conv_record ts env i (check_conv_record appr2 appr1)
            with Not_found -> UnifFailure (i,NoCanonicalStructure))
 	and f4 i =
-	  match eval_flexible_term ts env term2 with
-	    | Some v2 ->
 		evar_eqappr_x ts env i pbty (appr1,csts1)
 		  (whd_betaiota_deltazeta_for_iota_state
 		     ts env i (Cst_stack.add_cst term2 csts2) (v2,sk2))
-	    | None ->
-	      if isLambda term1 then eta env evd true sk1 term1 sk2 term2
-	      else UnifFailure (i,NotSameHead)
 	in
 	  ise_try evd [f3; f4]
 
@@ -536,6 +525,21 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) ts env evd pbty
                (fun i ->
  	         let c = nf_evar i c1 in
 	         evar_conv_x ts (push_rel (n,None,c) env) i pbty c'1 c'2)]
+
+	| Rel x1, Rel x2 ->
+	    if Int.equal x1 x2 then
+              exact_ise_stack2 env evd (evar_conv_x ts) sk1 sk2
+            else UnifFailure (evd,NotSameHead)
+
+	| Var var1, Var var2 ->
+	    if Id.equal var1 var2 then
+              exact_ise_stack2 env evd (evar_conv_x ts) sk1 sk2
+            else UnifFailure (evd,NotSameHead)
+
+	| Const c1, Const c2 ->
+	    if eq_constant c1 c2 then
+              exact_ise_stack2 env evd (evar_conv_x ts) sk1 sk2
+            else UnifFailure (evd,NotSameHead)
 
 	| Ind sp1, Ind sp2 ->
 	    if eq_ind sp1 sp2 then
@@ -571,20 +575,22 @@ and evar_eqappr_x ?(rhs_is_already_stuck = false) ts env evd pbty
 	  begin match ise_stack2 true env evd (evar_conv_x ts) sk1 sk2 with
 	  |_, (UnifFailure _ as x) -> x
 	  |None, Success i' -> evar_conv_x ts env i' CONV term1 term2
-	  |Some (sk1',sk2'), Success i' -> evar_conv_x ts env i' CONV (zip (term1,sk1')) (zip (term2,sk2'))
+	  |Some (sk1',sk2'), Success i' -> evar_conv_x ts env i' CONV (Stack.zip (term1,sk1')) (Stack.zip (term2,sk2'))
 	  end
 
-	| (Ind _ | Construct _ | Sort _ | Prod _ | CoFix _ | Fix _), _ -> UnifFailure (evd,NotSameHead)
-	| _, (Ind _ | Construct _ | Sort _ | Prod _ | CoFix _ | Fix _) -> UnifFailure (evd,NotSameHead)
+	| (Ind _ | Construct _ | Sort _ | Prod _ | CoFix _ | Fix _ | Rel _ | Var _ | Const _), _ ->
+	  UnifFailure (evd,NotSameHead)
+	| _, (Ind _ | Construct _ | Sort _ | Prod _ | CoFix _ | Fix _ | Rel _ | Var _ | Const _) ->
+	  UnifFailure (evd,NotSameHead)
 
 	| (App _ | Cast _ | Case _), _ -> assert false
-	| (LetIn _ | Rel _ | Var _ | Const _ | Evar _), _ -> assert false
+	| (LetIn _| Evar _), _ -> assert false
 	| (Lambda _), _ -> assert false
 
       end
 
 and conv_record trs env evd (c,bs,(params,params1),(us,us2),(ts,ts1),c1,(n,t2)) =
-  if Reductionops.compare_stack_shape ts ts1 then
+  if Reductionops.Stack.compare_shape ts ts1 then
     let (evd',ks,_) =
       List.fold_left
 	(fun (i,ks,m) b ->
@@ -597,12 +603,12 @@ and conv_record trs env evd (c,bs,(params,params1),(us,us2),(ts,ts1),c1,(n,t2)) 
     let app = mkApp (c, Array.rev_of_list ks) in
     ise_and evd'
       [(fun i ->
-	ise_list2 i
-          (fun i' x1 x -> evar_conv_x trs env i' CONV x1 (substl ks x))
+	exact_ise_stack2 env i
+          (fun env' i' cpb x1 x -> evar_conv_x trs env' i' cpb x1 (substl ks x))
           params1 params);
        (fun i ->
-	 ise_list2 i
-           (fun i' u1 u -> evar_conv_x trs env i' CONV u1 (substl ks u))
+	 exact_ise_stack2 env i
+           (fun env' i' cpb u1 u -> evar_conv_x trs env' i' cpb u1 (substl ks u))
            us2 us);
        (fun i -> evar_conv_x trs env i CONV c1 app);
        (fun i -> exact_ise_stack2 env i (evar_conv_x trs) ts ts1)]
@@ -858,7 +864,7 @@ let max_undefined_with_candidates evd =
   | [] -> None
   | a::l -> Some (List.last (a::l))
 
-let rec solve_unconstrained_evars_with_canditates evd =
+let rec solve_unconstrained_evars_with_canditates ts evd =
   (* max_undefined is supposed to return the most recent, hence
      possibly most dependent evar *)
   match max_undefined_with_candidates evd with
@@ -868,11 +874,11 @@ let rec solve_unconstrained_evars_with_canditates evd =
       | [] -> error "Unsolvable existential variables."
       | a::l ->
           try
-            let conv_algo = evar_conv_x full_transparent_state in
+            let conv_algo = evar_conv_x ts in
             let evd = check_evar_instance evd evk a conv_algo in
             let evd = Evd.define evk a evd in
             match reconsider_conv_pbs conv_algo evd with
-            | Success evd -> solve_unconstrained_evars_with_canditates evd
+            | Success evd -> solve_unconstrained_evars_with_canditates ts evd
             | UnifFailure _ -> aux l
           with
           | IllTypedInstance _ -> aux l
@@ -880,7 +886,7 @@ let rec solve_unconstrained_evars_with_canditates evd =
       (* List.rev is there to favor most dependent solutions *)
       (* and favor progress when used with the refine tactics *)
       let evd = aux (List.rev l) in
-      solve_unconstrained_evars_with_canditates evd
+      solve_unconstrained_evars_with_canditates ts evd
 
 let solve_unconstrained_impossible_cases evd =
   Evd.fold_undefined (fun evk ev_info evd' ->
@@ -888,8 +894,9 @@ let solve_unconstrained_impossible_cases evd =
     | _,Evar_kinds.ImpossibleCase -> Evd.define evk (j_type (coq_unit_judge ())) evd'
     | _ -> evd') evd evd
 
-let consider_remaining_unif_problems ?(ts=full_transparent_state) env evd =
-  let evd = solve_unconstrained_evars_with_canditates evd in
+let consider_remaining_unif_problems env
+    ?(ts=Conv_oracle.get_transp_state (Environ.oracle env)) evd =
+  let evd = solve_unconstrained_evars_with_canditates ts evd in
   let rec aux evd pbs progress stuck =
     match pbs with
     | (pbty,env,t1,t2 as pb) :: pbs ->
@@ -923,22 +930,22 @@ let consider_remaining_unif_problems ?(ts=full_transparent_state) env evd =
 
 exception UnableToUnify of evar_map * unification_error
 
-let the_conv_x ?(ts=full_transparent_state) env t1 t2 evd =
+let the_conv_x env ?(ts=Conv_oracle.get_transp_state (Environ.oracle env)) t1 t2 evd =
   match evar_conv_x ts env evd CONV  t1 t2 with
   | Success evd' -> evd'
   | UnifFailure (evd',e) -> raise (UnableToUnify (evd',e))
 
-let the_conv_x_leq ?(ts=full_transparent_state) env t1 t2 evd =
+let the_conv_x_leq env ?(ts=Conv_oracle.get_transp_state (Environ.oracle env)) t1 t2 evd =
   match evar_conv_x ts env evd CUMUL t1 t2 with
   | Success evd' -> evd'
   | UnifFailure (evd',e) -> raise (UnableToUnify (evd',e))
 
-let e_conv ?(ts=full_transparent_state) env evdref t1 t2 =
+let e_conv env ?(ts=Conv_oracle.get_transp_state (Environ.oracle env)) evdref t1 t2 =
   match evar_conv_x ts env !evdref CONV t1 t2 with
   | Success evd' -> evdref := evd'; true
   | _ -> false
 
-let e_cumul ?(ts=full_transparent_state) env evdref t1 t2 =
+let e_cumul env ?(ts=Conv_oracle.get_transp_state (Environ.oracle env)) evdref t1 t2 =
   match evar_conv_x ts env !evdref CUMUL t1 t2 with
   | Success evd' -> evdref := evd'; true
   | _ -> false

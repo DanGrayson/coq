@@ -156,7 +156,7 @@ let compare_glob_constr f add t1 t2 = match t1,t2 with
     when Name.equal na1 na2 && Constrexpr_ops.binding_kind_eq bk1 bk2 ->
       on_true_do (f ty1 ty2 && f c1 c2) add na1
   | GHole _, GHole _ -> true
-  | GSort (_,s1), GSort (_,s2) -> glob_sort_eq s1 s2
+  | GSort (_,s1), GSort (_,s2) -> Miscops.glob_sort_eq s1 s2
   | GLetIn (_,na1,b1,c1), GLetIn (_,na2,b2,c2) when Name.equal na1 na2 ->
       on_true_do (f b1 b2 && f c1 c2) add na1
   | (GCases _ | GRec _
@@ -473,7 +473,7 @@ let rec subst_notation_constr subst bound raw =
     | _ -> knd
     in
     let nsolve = Option.smartmap (Genintern.generic_substitute subst) solve in
-    if nsolve == solve && nknd = knd then raw
+    if nsolve == solve && nknd == knd then raw
     else NHole (nknd, nsolve)
 
   | NCast (r1,k) ->
@@ -512,12 +512,6 @@ let rec alpha_var id1 id2 = function
   | _::idl -> alpha_var id1 id2 idl
   | [] -> Id.equal id1 id2
 
-let compare_var v1 v2 =
-  match v1, v2 with
-  | GHole _, _ -> (true,true)
-  | _, GHole _ -> (false,false)
-  | _, _ -> (true,Pervasives.(=) v1 v2 (** FIXME *))
-
 let add_env alp (sigma,sigmalist,sigmabinders) var v =
   (* Check that no capture of binding variables occur *)
   if List.exists (fun (id,_) ->occur_glob_constr id v) alp then raise No_match;
@@ -532,7 +526,7 @@ let bind_env alp (sigma,sigmalist,sigmabinders as fullsigma) var v =
     | _, GHole _ ->
       add_env alp (Id.List.remove_assoc var sigma,sigmalist,sigmabinders) var v
     | _, _ ->
-        if Pervasives.(=) v v' then fullsigma (** FIXME *)
+        if glob_constr_eq v v' then fullsigma
         else raise No_match
   with Not_found -> add_env alp fullsigma var v
 
@@ -727,7 +721,7 @@ let rec match_ inner u alp (tmetas,blmetas as metas) sigma a1 a2 =
   | GCast(_,c1, CastCoerce), NCast(c2, CastCoerce) ->
       match_in u alp metas sigma c1 c2
   | GSort (_,GType _), NSort (GType None) when not u -> sigma
-  | GSort (_,s1), NSort s2 when glob_sort_eq s1 s2 -> sigma
+  | GSort (_,s1), NSort s2 when Miscops.glob_sort_eq s1 s2 -> sigma
   | GPatVar _, NHole _ -> (*Don't hide Metas, they bind in ltac*) raise No_match
   | a, NHole _ -> sigma
 
@@ -797,7 +791,7 @@ let add_patterns_for_params ind l =
 let bind_env_cases_pattern (sigma,sigmalist,x as fullsigma) var v =
   try
     let vvar = Id.List.assoc var sigma in
-    if Pervasives.(=) v vvar then fullsigma else raise No_match (** FIXME *)
+    if cases_pattern_eq v vvar then fullsigma else raise No_match
   with Not_found ->
     (* TODO: handle the case of multiple occs in different scopes *)
     (var,v)::sigma,sigmalist,x

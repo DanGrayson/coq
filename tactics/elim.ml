@@ -6,7 +6,6 @@
 (*         *       GNU Lesser General Public License Version 2.1        *)
 (************************************************************************)
 
-open Errors
 open Util
 open Names
 open Term
@@ -107,7 +106,7 @@ let head_in indl t gl =
       if !up_to_delta
       then find_mrectype env sigma t
       else extract_mrectype t
-    in List.mem ity indl
+    in List.exists (fun i -> eq_ind i ity) indl
   with Not_found -> false
 
 let decompose_these c l =
@@ -176,7 +175,7 @@ let double_ind h1 h2 =
     if abs_i < abs_j then Proofview.tclUNIT (abs_i,abs_j) else
     if abs_i > abs_j then  Proofview.tclUNIT (abs_j,abs_i) else
       Proofview.tclZERO (Errors.UserError ("", Pp.str"Both hypotheses are the same.")) in
-  abs >= fun (abs_i,abs_j) ->
+  abs >>= fun (abs_i,abs_j) ->
   (Tacticals.New.tclTHEN (Tacticals.New.tclDO abs_i intro)
      (Tacticals.New.onLastHypId
        	(fun id ->

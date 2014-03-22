@@ -796,6 +796,35 @@ type 'a sigma = {
 let sig_it x = x.it
 let sig_sig x = x.sigma
 
+(*******************************************************************)
+(* The state monad with state an evar map. *)
+
+module MonadR =
+  Monad.Make (struct
+
+    type +'a t = evar_map -> evar_map * 'a
+
+    let return a = fun s -> (s,a)
+
+    let (>>=) x f = fun s ->
+      let (s',a) = x s in
+      f a s'
+
+  end)
+
+module Monad =
+  Monad.Make (struct
+
+    type +'a t = evar_map -> 'a * evar_map
+
+    let return a = fun s -> (a,s)
+
+    let (>>=) x f = fun s ->
+      let (a,s') = x s in
+      f a s'
+
+  end)
+
 (**********************************************************)
 (* Failure explanation *)
 

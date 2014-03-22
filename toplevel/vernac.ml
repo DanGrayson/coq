@@ -14,13 +14,10 @@ open Util
 open Flags
 open System
 open Vernacexpr
-open Vernacinterp
 
 (* The functions in this module may raise (unexplainable!) exceptions.
    Use the module Coqtoplevel, which catches these exceptions
    (the exceptions are explained only at the toplevel). *)
-
-exception HasNotFailed
 
 (* The navigation vernac commands will be handled separately *)
 
@@ -43,30 +40,6 @@ and is_deep_navigation_vernac = function
 let is_reset = function
   | VernacResetInitial | VernacResetName _ -> true
   | _ -> false
-
-(* For coqtop -time, we display the position in the file,
-   and a glimpse of the executed command *)
-
-let display_cmd_header loc com =
-  let shorten s =
-    try (String.sub s 0 30)^"..." with Invalid_argument _ -> s in
-  let noblank s =
-    for i = 0 to String.length s - 1 do
-      match s.[i] with
-	| ' ' | '\n' | '\t' | '\r' -> s.[i] <- '~'
-	| _ -> ()
-    done;
-    s
-  in
-  let (start,stop) = Loc.unloc loc in
-  let safe_pr_vernac x =
-    try Ppvernac.pr_vernac x
-    with e when Errors.noncritical e -> str (Printexc.to_string e) in
-  let cmd = noblank (shorten (string_of_ppcmds (safe_pr_vernac com)))
-  in
-  Pp.pp (str "Chars " ++ int start ++ str " - " ++ int stop ++
-	 str (" ["^cmd^"] "));
-  Pp.flush_all ()
 
 (* When doing Load on a file, two behaviors are possible:
 
@@ -345,6 +318,7 @@ let compile verbosely f =
   match !Flags.compilation_mode with
   | BuildVo ->
       let ldir,long_f_dot_v = Flags.verbosely Library.start_library f in
+      Stm.set_compilation_hints long_f_dot_v;
       Aux_file.start_aux_file_for long_f_dot_v;
       Dumpglob.start_dump_glob long_f_dot_v;
       Dumpglob.dump_string ("F" ^ Names.DirPath.to_string ldir ^ "\n");
@@ -363,10 +337,18 @@ let compile verbosely f =
   | BuildVi ->
       let ldir, long_f_dot_v = Flags.verbosely Library.start_library f in
       Dumpglob.noglob ();
-      Stm.set_compilation_hints (Aux_file.load_aux_file_for long_f_dot_v);
+      Stm.set_compilation_hints long_f_dot_v;
       let _ = load_vernac verbosely long_f_dot_v in
       Stm.finish ();
       check_pending_proofs ();
-      let todo = Stm.dump () in
-      Library.save_library_to ~todo ldir long_f_dot_v
+      Library.save_library_to ~todo:Stm.dump ldir long_f_dot_v
+  | Vi2Vo ->
+      let open Filename in
+      let open Library in
+      Dumpglob.noglob ();
+      let f = if check_suffix f ".vi" then chop_extension f else f in
+      let lfdv, lib, univs, disch, tasks, proofs = load_library_todo f in
+      Stm.set_compilation_hints lfdv;
+      let univs, proofs = Stm.finish_tasks lfdv univs disch proofs tasks in
+      Library.save_library_raw lfdv lib univs proofs
 

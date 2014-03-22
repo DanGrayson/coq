@@ -30,7 +30,6 @@ open Decl_kinds
 open Constrexpr
 open Redexpr
 open Lemmas
-open Declaremods
 open Misctypes
 open Locality
 
@@ -274,6 +273,45 @@ let print_namespace ns =
     ) constants (str"")
   in
   msg_notice ((print_list pr_id ns)++str":"++fnl()++constants_in_namespace)
+
+let print_strategy r =
+  let open Conv_oracle in
+  let pr_level = function
+  | Expand -> str "expand"
+  | Level 0 -> str "transparent"
+  | Level n -> str "level" ++ spc() ++ int n
+  | Opaque -> str "opaque"
+  in
+  let pr_strategy (ref, lvl) = pr_global ref ++ str " : " ++ pr_level lvl in
+  let oracle = Environ.oracle (Global.env ()) in
+  match r with
+  | None ->
+    let fold key lvl (vacc, cacc) = match key with
+    | VarKey id -> ((VarRef id, lvl) :: vacc, cacc)
+    | ConstKey cst -> (vacc, (ConstRef cst, lvl) :: cacc)
+    | RelKey _ -> (vacc, cacc)
+    in
+    let var_lvl, cst_lvl = fold_strategy fold oracle ([], []) in
+    let var_msg =
+      if List.is_empty var_lvl then mt ()
+      else str "Variable strategies" ++ fnl () ++
+        hov 0 (prlist_with_sep fnl pr_strategy var_lvl) ++ fnl ()
+    in
+    let cst_msg =
+      if List.is_empty cst_lvl then mt ()
+      else str "Constant strategies" ++ fnl () ++
+        hov 0 (prlist_with_sep fnl pr_strategy cst_lvl)
+    in
+    msg_notice (var_msg ++ cst_msg)
+  | Some r ->
+    let r = Smartlocate.smart_global r in
+    let key = match r with
+    | VarRef id -> VarKey id
+    | ConstRef cst -> ConstKey cst
+    | IndRef _ | ConstructRef _ -> error "The reference is not unfoldable"
+    in
+    let lvl = get_strategy oracle key in
+    msg_notice (pr_strategy (r, lvl))
 
 let dump_universes_gen g s =
   let output = open_out s in
@@ -993,13 +1031,13 @@ let vernac_declare_arguments locality r l nargs flags =
   if nargs >= 0 && nargs < List.fold_left max 0 rargs then
     error "The \"/\" option must be placed after the last \"!\".";
   let rec narrow = function
-    | #Tacred.simpl_flag as x :: tl -> x :: narrow tl
+    | #Reductionops.ReductionBehaviour.flag as x :: tl -> x :: narrow tl
     | [] -> [] | _ :: tl -> narrow tl in
   let flags = narrow flags in
   if not (List.is_empty rargs) || nargs >= 0 || not (List.is_empty flags) then
     match sr with
     | ConstRef _ as c ->
-       Tacred.set_simpl_behaviour
+       Reductionops.ReductionBehaviour.set
          (make_section_locality locality) c (rargs, nargs, flags)
     | _ -> errorlabstrm "" (strbrk "Modifiers of the behavior of the simpl tactic are relevant for constants only.")
 
@@ -1418,6 +1456,7 @@ let vernac_print = function
       let nassums =
 	Assumptions.assumptions st ~add_opaque:o ~add_transparent:t cstr in
       msg_notice (Printer.pr_assumptionset (Global.env ()) nassums)
+  | PrintStrategy r -> print_strategy r
 
 let global_module r =
   let (loc,qid) = qualid_of_reference r in
@@ -1818,9 +1857,10 @@ let set_timeout n =
   Some psh
 
 let default_set_timeout () =
-  match !current_timeout with
-    | Some n -> set_timeout n
-    | None -> None
+  match !current_timeout, !default_timeout with
+    | Some n, _ -> set_timeout n
+    | None, Some n -> set_timeout n
+    | None, None -> None
 
 let restore_timeout = function
   | None -> ()
@@ -1828,7 +1868,8 @@ let restore_timeout = function
     (* stop alarm *)
     ignore(Unix.alarm 0);
     (* restore handler *)
-    Sys.set_signal Sys.sigalrm psh
+    Sys.set_signal Sys.sigalrm psh;
+    current_timeout := None
 
 let locate_if_not_already loc exn =
   match Loc.get_loc exn with
@@ -1869,7 +1910,7 @@ let interp ?(verbosely=true) ?proof (loc,c) =
 	  | HasNotFailed ->
 	      errorlabstrm "Fail" (str "The command has not failed!")
 	  | HasFailed msg ->
-	      if_verbose msg_info
+	      if is_verbose () || !Flags.ide_slave then msg_info
 		(str "The command has indeed failed with message:" ++
 		 fnl () ++ str "=> " ++ hov 0 (str msg))
           | _ -> assert false
@@ -1897,6 +1938,12 @@ let interp ?(verbosely=true) ?proof (loc,c) =
             Flags.program_mode := orig_program_mode
         with
           | reraise when Errors.noncritical reraise ->
+            let e = Errors.push reraise in
+            let e = locate_if_not_already loc e in
+            restore_timeout psh;
+            Flags.program_mode := orig_program_mode;
+            raise e
+          | Timeout as reraise ->
             let e = Errors.push reraise in
             let e = locate_if_not_already loc e in
             restore_timeout psh;

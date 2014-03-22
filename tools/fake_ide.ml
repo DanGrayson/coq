@@ -289,23 +289,29 @@ let usage () =
      (Filename.basename Sys.argv.(0))
      (Parser.print grammar))
 
+module Coqide = Spawn.Sync(struct
+  let add_timeout ~sec:_ _ = ()
+end)
+
 let main =
   Sys.set_signal Sys.sigpipe
     (Sys.Signal_handle
        (fun _ -> prerr_endline "Broken Pipe (coqtop died ?)"; exit 1));
-  let coqtop_name, input_file = match Sys.argv with
-    | [| _; f |] -> "coqtop", f
-    | [| _; f; ct |] -> ct, f
+  let coqtop_name, coqtop_args, input_file = match Sys.argv with
+    | [| _; f |] -> "coqtop",[|"-ideslave"|], f
+    | [| _; f; ct |] ->
+        let ct = Str.split (Str.regexp " ") ct in
+        List.hd ct, Array.of_list ("-ideslave" :: List.tl ct), f
     | _ -> usage () in
   let inc = if input_file = "-" then stdin else open_in input_file in
   let coq =
-    let (cin, cout) = Unix.open_process (coqtop_name^" -ideslave") in
+    let _p, cin, cout = Coqide.spawn coqtop_name coqtop_args in
     let ip = Xml_parser.make (Xml_parser.SChannel cin) in
     let op = Xml_printer.make (Xml_printer.TChannel cout) in
     Xml_parser.check_eof ip false;
     { xml_printer = op; xml_parser = ip } in
   let init () =
-    match base_eval_call ~print:false (Serialize.init ()) coq with
+    match base_eval_call ~print:false (Serialize.init None) coq with
     | Interface.Good id ->
         let dir = Filename.dirname input_file in
         let phrase = Printf.sprintf "Add LoadPath \"%s\". " dir in

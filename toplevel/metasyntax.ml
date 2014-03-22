@@ -104,11 +104,6 @@ let cons_production_parameter l = function
   | GramTerminal _ -> l
   | GramNonTerminal (_,_,_,ido) -> Option.List.cons ido l
 
-let rec tactic_notation_key = function
-  | GramTerminal id :: _ -> id
-  | _ :: l -> tactic_notation_key l
-  | [] -> "terminal_free_notation"
-
 let add_tactic_notation (local,n,prods,e) =
   let prods = List.map (interp_prod_item n) prods in
   let tags = make_tags prods in
@@ -404,9 +399,6 @@ let error_not_same_scope x y =
 (**********************************************************************)
 (* Build pretty-printing rules                                        *)
 
-type printing_precedence = int * parenRelation
-type parsing_precedence = int option
-
 let prec_assoc = function
   | RightA -> (L,E)
   | LeftA -> (E,L)
@@ -451,10 +443,6 @@ let is_operator s =
   (s.[0] == '+' || s.[0] == '*' || s.[0] == '=' ||
    s.[0] == '-' || s.[0] == '/' || s.[0] == '<' || s.[0] == '>' ||
    s.[0] == '@' || s.[0] == '\\' || s.[0] == '&' || s.[0] == '~' || s.[0] == '$')
-
-let is_prod_ident = function
-  | Terminal s when is_letter s.[0] || s.[0] == '_' -> true
-  | _ -> false
 
 let is_non_terminal = function
   | NonTerminal _ | SProdList _ -> true
@@ -934,7 +922,7 @@ let is_not_printable onlyparse noninjective = function
   if not onlyparse && noninjective then
     let () = msg_warning (strbrk "This notation will not be used for printing as it is not reversible.") in
     true
-  else false
+  else onlyparse
 
 let find_precedence lev etyps symbols =
   match symbols with
@@ -1059,7 +1047,7 @@ let open_notation i (_, nobj) =
   let scope = nobj.notobj_scope in
   let (ntn, df) = nobj.notobj_notation in
   let pat = nobj.notobj_interp in
-  if Int.equal i 1 && not (Notation.exists_notation_in_scope scope ntn pat) then begin
+  if Int.equal i 1 then begin
     (* Declare the interpretation *)
     Notation.declare_notation_interpretation ntn scope pat df;
     (* Declare the uninterpretation *)

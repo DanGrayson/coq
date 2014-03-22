@@ -19,17 +19,9 @@ exception Anomaly of string option * std_ppcmds (* System errors *)
 let make_anomaly ?label pp =
   Anomaly (label, pp)
 
-let anomaly_gen label pp =
-  raise (Anomaly (label, pp))
-
-let anomaly ?loc ?label pp =
-  match loc with
+let anomaly ?loc ?label pp = match loc with
   | None -> raise (Anomaly (label, pp))
-  | Some loc ->
-    Loc.raise loc (Anomaly (label, pp))
-
-let anomalylabstrm string pps =
-  anomaly_gen (Some string) pps
+  | Some loc -> Loc.raise loc (Anomaly (label, pp))
 
 let is_anomaly = function
 | Anomaly _ -> true
@@ -106,8 +98,6 @@ let print e =
     isn't printed (used in Ltac debugging). *)
 let print_no_report e = print_gen (print_anomaly false) !handle_stack e
 
-let print_anomaly e = print_anomaly true e
-
 (** Predefined handlers **)
 
 let _ = register_handler begin function
@@ -124,4 +114,5 @@ let noncritical = function
   | Sys.Break | Out_of_memory | Stack_overflow
   | Assert_failure _ | Match_failure _ | Anomaly _
   | Timeout | Drop | Quit -> false
+  | Invalid_argument "equal: functional value" -> false
   | _ -> true

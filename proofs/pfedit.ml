@@ -12,7 +12,6 @@ open Names
 open Entries
 open Environ
 open Evd
-open Refiner
 
 let refining = Proof_global.there_are_pending_proofs
 let check_no_pending_proofs = Proof_global.check_no_pending_proof
@@ -25,9 +24,6 @@ type lemma_possible_guards = Proof_global.lemma_possible_guards
 let delete_proof = Proof_global.discard
 let delete_current_proof = Proof_global.discard_current
 let delete_all_proofs = Proof_global.discard_all
-
-let set_undo _ = ()
-let get_undo _ = None
 
 let start_proof (id : Id.t) str hyps c ?init_tac terminator =
   let goals = [ (Global.env_of_context hyps , c) ] in
@@ -132,11 +128,6 @@ let build_constant_by_tactic id sign ?(goal_kind = Global,Proof Theorem) typ tac
   with reraise ->
     delete_current_proof ();
     raise reraise
-
-let constr_of_def = function
-  | Declarations.Undef _ -> assert false
-  | Declarations.Def cs -> Lazyconstr.force cs
-  | Declarations.OpaqueDef lc -> Lazyconstr.force_opaque (Future.force lc)
 
 let build_by_tactic env typ tac =
   let id = Id.of_string ("temporary_proof"^string_of_int (next())) in

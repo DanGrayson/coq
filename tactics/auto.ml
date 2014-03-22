@@ -10,7 +10,6 @@ open Pp
 open Errors
 open Util
 open Names
-open Nameops
 open Namegen
 open Term
 open Vars
@@ -21,7 +20,6 @@ open Evd
 open Typing
 open Pattern
 open Patternops
-open Matching
 open Tacmach
 open Pfedit
 open Genredexpr
@@ -31,13 +29,11 @@ open Tacticals
 open Clenv
 open Libnames
 open Globnames
-open Nametab
 open Smartlocate
 open Libobject
 open Printer
 open Tacexpr
 open Mod_subst
-open Misctypes
 open Locus
 open Proofview.Notations
 
@@ -75,6 +71,27 @@ type 'a gen_auto_tactic = {
 type pri_auto_tactic = clausenv gen_auto_tactic
 
 type hint_entry = global_reference option * types gen_auto_tactic
+
+let eq_hints_path_atom p1 p2 = match p1, p2 with
+| PathHints gr1, PathHints gr2 -> List.equal eq_gr gr1 gr2
+| PathAny, PathAny -> true
+| (PathHints _ | PathAny), _ -> false
+
+let eq_auto_tactic t1 t2 = match t1, t2 with
+| Res_pf (c1, _), Res_pf (c2, _) -> Constr.equal c1 c2
+| ERes_pf (c1, _), ERes_pf (c2, _) -> Constr.equal c1 c2
+| Give_exact c1, Give_exact c2 -> Constr.equal c1 c2
+| Res_pf_THEN_trivial_fail (c1, _), Res_pf_THEN_trivial_fail (c2, _) -> Constr.equal c1 c2
+| Unfold_nth gr1, Unfold_nth gr2 -> eq_egr gr1 gr2
+| Extern tac1, Extern tac2 -> tac1 == tac2 (** May cause redundancy in addkv *)
+| (Res_pf _ | ERes_pf _ | Give_exact _ | Res_pf_THEN_trivial_fail _
+  | Unfold_nth _ | Extern _), _ -> false
+
+let eq_gen_auto_tactic t1 t2 =
+  Int.equal t1.pri t2.pri &&
+  Option.equal constr_pattern_eq t1.pat t2.pat &&
+  eq_hints_path_atom t1.name t2.name &&
+  eq_auto_tactic t1.code t2.code
 
 let pri_order_int (id1, {pri=pri1}) (id2, {pri=pri2}) =
   let d = pri1 - pri2 in
@@ -146,7 +163,7 @@ let rebuild_dn st ((l,l',dn) : search_entry) =
 
 
 let lookup_tacs (hdc,c) st (l,l',dn) =
-  let l'  = List.map snd (Bounded_net.lookup st dn c) in
+  let l'  = Bounded_net.lookup st dn c in
   let sl' = List.stable_sort pri_order_int l' in
     List.merge pri_order_int l sl'
 
@@ -364,7 +381,9 @@ module Hint_db = struct
     let pat = if not db.use_dn && is_exact v.code then None else v.pat in
       match k with
       | None ->
-	  if not (List.exists (fun (_, (_, v')) -> Pervasives.(=) v v') db.hintdb_nopat) then (** FIXME *)
+          (** ppedrot: this equality here is dubious. Maybe we can remove it? *)
+          let is_present (_, (_, v')) = eq_gen_auto_tactic v v' in
+	  if not (List.exists is_present db.hintdb_nopat) then
 	    { db with hintdb_nopat = (gr,idv) :: db.hintdb_nopat }
 	  else db
       | Some gr ->
@@ -405,7 +424,7 @@ module Hint_db = struct
 
   let remove_list grs db =
     let filter (_, h) =
-      match h.name with PathHints [gr] -> not (List.mem gr grs) | _ -> true in
+      match h.name with PathHints [gr] -> not (List.mem_f eq_gr gr grs) | _ -> true in
     let hintmap = Constr_map.map (remove_he db.hintdb_state filter) db.hintdb_map in
     let hintnopat = List.smartfilter (fun (ge, sd) -> filter sd) db.hintdb_nopat in
       { db with hintdb_map = hintmap; hintdb_nopat = hintnopat }
@@ -1115,10 +1134,12 @@ let conclPattern concl pat tac =
     match pat with
     | None -> Proofview.tclUNIT Id.Map.empty
     | Some pat ->
-	try Proofview.tclUNIT (matches pat concl)
-	with PatternMatchingFailure -> Proofview.tclZERO (UserError ("conclPattern",str"conclPattern")) in
-    constr_bindings >= fun constr_bindings ->
-    Hook.get forward_interp_tactic constr_bindings tac
+	try Proofview.tclUNIT (ConstrMatching.matches pat concl)
+	with ConstrMatching.PatternMatchingFailure ->
+          Proofview.tclZERO (UserError ("conclPattern",str"conclPattern"))
+  in
+  constr_bindings >>= fun constr_bindings ->
+  Hook.get forward_interp_tactic constr_bindings tac
 
 (***********************************************************)
 (** A debugging / verbosity framework for trivial and auto *)
@@ -1420,9 +1441,6 @@ let possible_resolve dbg mod_delta db_list local_db cl =
       List.map (tac_of_hint dbg db_list local_db cl)
 	(my_find_search mod_delta db_list local_db head cl)
   with Not_found -> []
-
-let dbg_case dbg id =
-  new_tclLOG dbg (fun () -> str "case " ++ pr_id id) (simplest_case (mkVar id))
 
 let extend_local_db gl decl db =
   Hint_db.add_list (make_resolve_hyp (pf_env gl) (project gl) decl) db

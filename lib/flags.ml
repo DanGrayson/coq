@@ -45,7 +45,7 @@ let boot = ref false
 
 let batch_mode = ref false
 
-type compilation_mode = BuildVo | BuildVi
+type compilation_mode = BuildVo | BuildVi | Vi2Vo
 let compilation_mode = ref BuildVo
 
 type async_proofs = APoff | APonLazy | APonParallel of int
@@ -178,14 +178,6 @@ let is_standard_doc_url url =
   url = Coq_config.localwwwrefman ||
   url = Coq_config.wwwrefman ||
   url = wwwcompatprefix ^ String.sub Coq_config.wwwrefman n (n'-n)
-
-(* same as in System, but copied here because of dependencies *)
-let canonical_path_name p =
-  let current = Sys.getcwd () in
-  Sys.chdir p;
-  let result = Sys.getcwd () in
-  Sys.chdir current;
-  result
 
 (* Options for changing coqlib *)
 let coqlib_spec = ref false

@@ -116,6 +116,12 @@ let normalize_scope sc =
 type scope_elem = Scope of scope_name | SingleNotation of string
 type scopes = scope_elem list
 
+let scope_eq s1 s2 = match s1, s2 with
+| Scope s1, Scope s2
+| SingleNotation s1, SingleNotation s2 -> String.equal s1 s2
+| Scope _, SingleNotation _
+| SingleNotation _, Scope _ -> false
+
 let scope_stack = ref []
 
 let current_scopes () = !scope_stack
@@ -136,7 +142,7 @@ let open_scope i (_,(local,op,sc)) =
     in
     scope_stack :=
       if op then sc :: !scope_stack
-      else List.except Pervasives.(=) sc !scope_stack (* FIXME *)
+      else List.except scope_eq sc !scope_stack
 
 let cache_scope o =
   open_scope 1 o
@@ -248,7 +254,8 @@ let keymap_find key map =
 
 (* Scopes table : interpretation -> scope_name *)
 let notations_key_table = ref (KeyMap.empty : notation_rule list KeyMap.t)
-let prim_token_key_table = Hashtbl.create 7
+
+let prim_token_key_table = ref KeyMap.empty
 
 let glob_prim_constr_key = function
   | GApp (_,GRef (_,ref),_) | GRef (_,ref) -> RefKey (canonical_gr ref)
@@ -303,8 +310,8 @@ let declare_prim_token_interpreter sc interp (patl,uninterp,b) =
   declare_scope sc;
   add_prim_token_interpreter sc interp;
   List.iter (fun pat ->
-      Hashtbl.add prim_token_key_table
-        (glob_prim_constr_key pat) (sc,uninterp,b))
+      prim_token_key_table := KeyMap.add
+        (glob_prim_constr_key pat) (sc,uninterp,b) !prim_token_key_table)
     patl
 
 let mkNumeral n = Numeral n
@@ -443,8 +450,18 @@ let interp_prim_token_gen g loc p local_scopes =
 let interp_prim_token =
   interp_prim_token_gen (fun x -> x)
 
+(** [rcp_of_glob] : from [glob_constr] to [raw_cases_pattern_expr] *)
+
+let rec rcp_of_glob looked_for = function
+  | GVar (loc,id) -> RCPatAtom (loc,Some id)
+  | GHole (loc,_,_) -> RCPatAtom (loc,None)
+  | GRef (loc,g) -> looked_for g; RCPatCstr (loc, g,[],[])
+  | GApp (loc,GRef (_,g),l) ->
+    looked_for g; RCPatCstr (loc, g, List.map (rcp_of_glob looked_for) l,[])
+  | _ -> raise Not_found
+
 let interp_prim_token_cases_pattern_expr loc looked_for p =
-  interp_prim_token_gen (Constrexpr_ops.raw_cases_pattern_expr_of_glob_constr looked_for) loc p
+  interp_prim_token_gen (rcp_of_glob looked_for) loc p
 
 let interp_notation loc ntn local_scopes =
   let scopes = make_current_scopes local_scopes in
@@ -471,7 +488,7 @@ let availability_of_notation (ntn_scope,ntn) scopes =
 let uninterp_prim_token c =
   try
     let (sc,numpr,_) =
-      Hashtbl.find prim_token_key_table (glob_prim_constr_key c) in
+      KeyMap.find (glob_prim_constr_key c) !prim_token_key_table in
     match numpr c with
       | None -> raise Notation_ops.No_match
       | Some n -> (sc,n)
@@ -480,8 +497,8 @@ let uninterp_prim_token c =
 let uninterp_prim_token_ind_pattern ind args =
   let ref = IndRef ind in
   try
-    let (sc,numpr,b) = Hashtbl.find prim_token_key_table
-      (RefKey (canonical_gr ref)) in
+    let k = RefKey (canonical_gr ref) in
+    let (sc,numpr,b) = KeyMap.find k !prim_token_key_table in
     if not b then raise Notation_ops.No_match;
     let args' = List.map
       (fun x -> snd (glob_constr_of_closed_cases_pattern x)) args in
@@ -494,7 +511,7 @@ let uninterp_prim_token_ind_pattern ind args =
 let uninterp_prim_token_cases_pattern c =
   try
     let k = cases_pattern_key c in
-    let (sc,numpr,b) = Hashtbl.find prim_token_key_table k in
+    let (sc,numpr,b) = KeyMap.find k !prim_token_key_table in
     if not b then raise Notation_ops.No_match;
     let na,c = glob_constr_of_closed_cases_pattern c in
     match numpr c with
@@ -510,14 +527,6 @@ let availability_of_prim_token n printer_scope local_scopes =
   Option.map snd (find_without_delimiters f (Some printer_scope,None) scopes)
 
 (* Miscellaneous *)
-
-let exists_notation_in_scope scopt ntn r =
-  let scope = match scopt with Some s -> s | None -> default_scope in
-  try
-    let sc = String.Map.find scope !scope_map in
-    let (r',_) = String.Map.find ntn sc.notations in
-    Pervasives.(=) r' r (** FIXME *)
-  with Not_found -> false
 
 let isNVar_or_NHole = function NVar _ | NHole _ -> true | _ -> false
 

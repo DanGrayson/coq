@@ -637,22 +637,25 @@ let enforce_constraint cst g =
     | (u,Le,v) -> enforce_univ_leq u v g
     | (u,Eq,v) -> enforce_univ_eq u v g
 
-module Constraint = Set.Make(
-  struct
-    type t = univ_constraint
-    let compare (u,c,v) (u',c',v') =
-      let i = constraint_type_ord c c' in
-      if not (Int.equal i 0) then i
-      else
-	let i' = UniverseLevel.compare u u' in
-	if not (Int.equal i' 0) then i'
-	else UniverseLevel.compare v v'
-  end)
+module UConstraintOrd =
+struct
+  type t = univ_constraint
+  let compare (u,c,v) (u',c',v') =
+    let i = constraint_type_ord c c' in
+    if not (Int.equal i 0) then i
+    else
+      let i' = UniverseLevel.compare u u' in
+      if not (Int.equal i' 0) then i'
+      else UniverseLevel.compare v v'
+end
+
+module Constraint = Set.Make(UConstraintOrd)
 
 type constraints = Constraint.t
 
 let empty_constraint = Constraint.empty
 let is_empty_constraint = Constraint.is_empty
+let eq_constraint = Constraint.equal
 
 let union_constraints = Constraint.union
 
@@ -892,12 +895,8 @@ let sort_universes orig =
 
 (* Temporary inductive type levels *)
 
-let fresh_level =
-  let n = ref 0 in
-  fun () -> incr n; UniverseLevel.Level (!n, Names.DirPath.empty)
-
 let fresh_local_univ, set_remote_fresh_local_univ =
-  RemoteCounter.new_counter 0 ~incr:((+) 1)
+  RemoteCounter.new_counter ~name:"local_univ" 0 ~incr:((+) 1)
     ~build:(fun n -> Atom (UniverseLevel.Level (n, Names.DirPath.empty)))
 
 (* Miscellaneous functions to remove or test local univ assumed to
@@ -1078,19 +1077,13 @@ module Hconstraint =
       let hash = Hashtbl.hash
     end)
 
-module Hconstraints =
-  Hashcons.Make(
-    struct
-      type t = constraints
-      type u = univ_constraint -> univ_constraint
-      let hashcons huc s =
-	Constraint.fold (fun x -> Constraint.add (huc x)) s Constraint.empty
-      let equal s s' =
-	List.for_all2eq (==)
-	  (Constraint.elements s)
-	  (Constraint.elements s')
-      let hash = Hashtbl.hash
-    end)
+module UConstraintHash =
+struct
+  type t = univ_constraint
+  let hash = Hashtbl.hash
+end
+
+module Hconstraints = Set.Hashcons(UConstraintOrd)(UConstraintHash)
 
 let hcons_constraint = Hashcons.simple_hcons Hconstraint.generate hcons_univlevel
 let hcons_constraints = Hashcons.simple_hcons Hconstraints.generate hcons_constraint

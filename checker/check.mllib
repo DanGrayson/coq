@@ -1,8 +1,13 @@
 Coq_config
 
 Hook
+Canary
+Hashset
+Hashcons
+CSet
 CMap
 Int
+HMap
 Option
 Store
 Exninfo
@@ -15,8 +20,6 @@ Segmenttree
 Unicodetable
 Unicode
 Errors
-Hashset
-Hashcons
 CObj
 CList
 CString

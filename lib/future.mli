@@ -50,6 +50,16 @@
  * they will become invalid and accessing them raises a private exception.
  *)
 
+(* Each computation has a unique id that is inherited by each offspring
+ * computation (chain, split, map...).  Joined computations lose it.  *)
+module UUID : sig
+  type t
+  val invalid : t
+
+  val compare : t -> t -> int
+  val equal : t -> t -> bool
+end
+
 exception NotReady
 
 type 'a computation
@@ -75,7 +85,8 @@ val from_val : ?fix_exn:fix_exn -> 'a -> 'a computation
 val from_here : ?fix_exn:fix_exn -> 'a -> 'a computation
 
 (* Run remotely, returns the function to assign.  Optionally tekes a function
-   that is called when forced.  The default one is to raise NotReady *)
+   that is called when forced.  The default one is to raise NotReady.
+   The assignement function does not change the uuid. *)
 type 'a assignement = [ `Val of 'a | `Exn of exn | `Comp of 'a computation]
 val create_delegate :
   ?force:(unit -> 'a assignement) ->
@@ -89,6 +100,7 @@ val is_over : 'a computation -> bool
 val is_val : 'a computation -> bool
 val is_exn : 'a computation -> bool
 val peek_val : 'a computation -> 'a option
+val uuid : 'a computation -> UUID.t
 
 (* [chain greedy pure c f] chains computation [c] with [f].
  * The [greedy] and [pure] parameters are tricky:
@@ -103,7 +115,7 @@ val peek_val : 'a computation -> 'a option
  *   [force c; chain ~pure:false c g] is correct.
  * [greedy]:
  *   The [greedy] parameter forces immediately the new computation if
- *   the old one is_over (Exn or Val). Defaults to false. *)
+ *   the old one is_over (Exn or Val). Defaults to true. *)
 val chain : ?greedy:bool -> pure:bool ->
   'a computation -> ('a -> 'b) -> 'b computation
 
@@ -111,8 +123,13 @@ val chain : ?greedy:bool -> pure:bool ->
 val force : 'a computation -> 'a
 val compute : 'a computation -> 'a value
 
-(* Final call, no more *inpure* chain allowed since the state is lost *)
+(* Final call, no more *inpure* chain allowed since the state is lost.
+ * Also the fix_exn function is lost, hence error reporting can be incomplete
+ * in a computation obtained by chaining on a joined future. *)
 val join : 'a computation -> 'a
+
+(* Call this before stocking the future.  If it is_val then it is joined *)
+val sink : 'a computation -> unit
 
 (*** Utility functions ************************************************* ***)
 val split2 : ?greedy:bool ->

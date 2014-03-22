@@ -44,10 +44,7 @@
    (synchronous = consistent with the resetting commands)                   *)
 
 open Pp
-open Names
 open Libnames
-open Term
-open Nametab
 open Mod_subst
 
 type option_name = Interface.option_name
@@ -89,6 +86,7 @@ module MakeRefTable :
   functor
     (A : sig
            type t
+           val compare : t -> t -> int
            val encode : reference -> t
 	   val subst : substitution -> t -> t
            val printer : t -> std_ppcmds

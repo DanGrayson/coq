@@ -6,7 +6,6 @@
 (*         *       GNU Lesser General Public License Version 2.1        *)
 (************************************************************************)
 
-open Pp
 open Util
 open Errors
 open Names
@@ -768,10 +767,6 @@ let filter_candidates evd evk filter candidates =
   | Some l, Some filter ->
       let ids = set_of_evctx (Filter.filter_list filter (evar_context evi)) in
       Some (List.filter (fun a -> Id.Set.subset (collect_vars a) ids) l)
-
-let eq_filter f1 f2 =
-  let eq_bool b1 b2 = if b1 then b2 else not b2 in
-  List.equal eq_bool f1 f2
 
 let closure_of_filter evd evk = function
   | None -> None

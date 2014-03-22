@@ -223,7 +223,7 @@ let apply env t sp =
 (*** tacticals ***)
 
 
-let rec catchable_exception = function
+let catchable_exception = function
   | Proof_errors.Exception _ -> false
   | e -> Errors.noncritical e
 
@@ -639,33 +639,17 @@ let in_proofview p k =
   k p.solution
 
 
-(* spiwack: to help using `bind' like construct consistently. A glist
-   is promissed to have exactly one element per goal when it is
-   produced. *)
-type 'a glist  = 'a list
 
 module Notations = struct
-  let (>=) = tclBIND
-  let (>>=) t k =
-    t >= fun l ->
-    tclDISPATCHGEN k ignore l
-  let (>>==) t k =
-    begin
-      t >= fun l ->
-      tclDISPATCHGEN k List.rev l
-    end >= fun l' ->
-    tclUNIT (List.flatten l')
+  let (>>=) = tclBIND
   let (<*>) = tclTHEN
   let (<+>) t1 t2 = tclOR t1 (fun _ -> t2)
 end
 
 open Notations
-let rec list_map f = function
-  | [] -> tclUNIT []
-  | a::l ->
-      f a >= fun a' ->
-      list_map f l >= fun l' ->
-      tclUNIT (a'::l')
+
+module Monad =
+  Monad.Make(struct type +'a t = 'a tactic let return=tclUNIT let (>>=)=(>>=) end)
 
 
 (*** Compatibility layer with <= 8.2 tactics ***)
@@ -679,7 +663,7 @@ module V82 = struct
     let (>>=) = Proof.bind in
     Proof.get >>= fun ps ->
     try
-      let tac evd gl = 
+      let tac gl evd = 
         let glsigma  =
           tac { Evd.it = gl ; sigma = evd; }  in
         let sigma = glsigma.Evd.sigma in
@@ -688,9 +672,9 @@ module V82 = struct
       in
         (* Old style tactics expect the goals normalized with respect to evars. *)
       let (initgoals,initevd) =
-        Goal.list_map Goal.V82.nf_evar ps.comb ps.solution
+        Evd.Monad.List.map (fun g s -> Goal.V82.nf_evar s g) ps.comb ps.solution
       in
-      let (goalss,evd) = Goal.list_map tac initgoals initevd in
+      let (goalss,evd) = Evd.Monad.List.map tac initgoals initevd in
       let sgs = List.flatten goalss in
       Proof.set { ps with solution=evd ; comb=sgs; }
     with e when catchable_exception e ->
@@ -705,7 +689,7 @@ module V82 = struct
     let (>>=) = Proof.bind in
     Proof.get >>= fun ps ->
     let (goals,evd) =
-      Goal.list_map Goal.V82.nf_evar ps.comb ps.solution
+      Evd.Monad.List.map (fun g s -> Goal.V82.nf_evar s g) ps.comb ps.solution
     in
     Proof.set { ps with solution=evd ; comb=goals }
 
@@ -774,12 +758,17 @@ module V82 = struct
     Proof.put (b,([],[]))
 
   let catchable_exception = catchable_exception
+
+  let wrap_exceptions f =
+    try f ()
+    with e when catchable_exception e -> let e = Errors.push e in tclZERO e
+
 end
 
 
 module Goal = struct
 
-  type t = {
+  type 'a t = {
     env : Environ.env;
     sigma : Evd.evar_map;
     hyps : Environ.named_context_val;
@@ -787,38 +776,42 @@ module Goal = struct
     self : Goal.goal ; (* for compatibility with old-style definitions *)
   }
 
+  let assume (gl : 'a t) = (gl :> [ `NF ] t)
+
   let env { env=env } = env
   let sigma { sigma=sigma } = sigma
   let hyps { hyps=hyps } = Environ.named_context_of_val hyps
   let concl { concl=concl } = concl
 
-  let lift s =
+  let lift s k =
     (* spiwack: convenience notations, waiting for ocaml 3.12 *)
     let (>>=) = Proof.bind in
     let (>>) = Proof.seq in
     Proof.current >>= fun env ->
     Proof.get >>= fun step ->
     try
-      let (res,sigma) =
-        Goal.list_map begin fun sigma g ->
-          Goal.eval s env sigma g
+      let (ks,sigma) =
+        Evd.Monad.List.map begin fun g sigma ->
+          Util.on_fst k (Goal.eval s env sigma g)
         end step.comb step.solution
       in
       Proof.set { step with solution=sigma } >>
-        Proof.ret res
+      tclDISPATCH ks
     with e when catchable_exception e ->
       let e = Errors.push e in
       tclZERO e
 
-  let return x = lift (Goal.return x)
-
   let enter_t f = Goal.enter begin fun env sigma hyps concl self ->
+    let concl = Reductionops.nf_evar sigma concl in
+    let map_nf c = Reductionops.nf_evar sigma c in
+    let hyps = Environ.map_named_val map_nf hyps in
     f {env=env;sigma=sigma;hyps=hyps;concl=concl;self=self}
   end
+
   let enter f =
     list_iter_goal () begin fun goal () ->
-      Proof.current >= fun env ->
-      tclEVARMAP >= fun sigma ->
+      Proof.current >>= fun env ->
+      tclEVARMAP >>= fun sigma ->
       try
         (* enter_t cannot modify the sigma. *)
         let (t,_) = Goal.eval (enter_t f) env sigma goal in
@@ -827,24 +820,29 @@ module Goal = struct
         let e = Errors.push e in
         tclZERO e
     end
-  let enterl f =
-    list_iter_goal [] begin fun goal acc ->
-      Proof.current >= fun env ->
-      tclEVARMAP >= fun sigma ->
+
+  let raw_enter_t f = Goal.enter begin fun env sigma hyps concl self ->
+    f {env=env;sigma=sigma;hyps=hyps;concl=concl;self=self}
+  end
+
+  let raw_enter f =
+    list_iter_goal () begin fun goal () ->
+      Proof.current >>= fun env ->
+      tclEVARMAP >>= fun sigma ->
       try
-        (* enter_t cannot modify the sigma. *)
-        let (t,_) = Goal.eval (enter_t f) env sigma goal in
-        t >= fun r ->
-        tclUNIT (r::acc)
+        (* raw_enter_t cannot modify the sigma. *)
+        let (t,_) = Goal.eval (raw_enter_t f) env sigma goal in
+        t
       with e when catchable_exception e ->
         let e = Errors.push e in
         tclZERO e
-    end >= fun res ->
-    tclUNIT (List.flatten (List.rev res))
-
+    end
 
   (* compatibility *)
   let goal { self=self } = self
+  let refresh_sigma g =
+    tclEVARMAP >>= fun sigma ->
+    tclUNIT { g with sigma }
 
 end
 

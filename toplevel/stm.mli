@@ -44,10 +44,13 @@ val stop_worker : int -> unit
 val join : unit -> unit
 (* To save to disk an incomplete document *)
 type tasks
-val dump : unit -> tasks
+val dump : (Future.UUID.t * int) list -> tasks
 
 val check_task : string -> tasks -> int -> bool
 val info_tasks : tasks -> (string * float * int) list
+val finish_tasks : string ->
+  Library.seg_univ -> Library.seg_discharge -> Library.seg_proofs ->
+  tasks -> Library.seg_univ * Library.seg_proofs
 
 (* Id of the tip of the current branch *)
 val get_current_state : unit -> Stateid.t
@@ -57,7 +60,11 @@ val init : unit -> unit
 val slave_main_loop : unit -> unit
 val slave_init_stdout : unit -> unit
 
-val set_compilation_hints : Aux_file.aux_file -> unit
+(* Filename *)
+val set_compilation_hints : string -> unit
+
+(* Reorders the task queue putting forward what is in the perspective *)
+val set_perspective : Stateid.t list -> unit
 
 (** read-eval-print loop compatible interface ****************************** **)
 

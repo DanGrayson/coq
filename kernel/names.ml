@@ -19,7 +19,6 @@
    Élie Soubiran, ... *)
 
 open Pp
-open Errors
 open Util
 
 (** {6 Identifiers } *)
@@ -332,53 +331,73 @@ module MPmap = CMap.Make(ModPath)
 
 module KerName = struct
 
-  type t = ModPath.t * DirPath.t * Label.t
+  type t = {
+    canary : Canary.t;
+    modpath : ModPath.t;
+    dirpath : DirPath.t;
+    knlabel : Label.t;
+    mutable refhash : int;
+    (** Lazily computed hash. If unset, it is set to negative values. *)
+  }
+
+  let canary = Canary.obj
 
   type kernel_name = t
 
-  let make mp dir l = (mp,dir,l)
-  let repr kn = kn
+  let make modpath dirpath knlabel =
+    { modpath; dirpath; knlabel; refhash = -1; canary; }
+  let repr kn = (kn.modpath, kn.dirpath, kn.knlabel)
 
-  let make2 mp l = (mp,DirPath.empty,l)
+  let make2 modpath knlabel =
+    { modpath; dirpath = DirPath.empty; knlabel; refhash = -1; canary; }
 
-  let modpath (mp,_,_) = mp
-  let label (_,_,l) = l
+  let modpath kn = kn.modpath
+  let label kn = kn.knlabel
 
-  let to_string (mp,dir,l) =
+  let to_string kn =
     let dp =
-      if DirPath.is_empty dir then "."
-      else "#" ^ DirPath.to_string dir ^ "#"
+      if DirPath.is_empty kn.dirpath then "."
+      else "#" ^ DirPath.to_string kn.dirpath ^ "#"
     in
-    ModPath.to_string mp ^ dp ^ Label.to_string l
+    ModPath.to_string kn.modpath ^ dp ^ Label.to_string kn.knlabel
 
   let print kn = str (to_string kn)
 
   let compare (kn1 : kernel_name) (kn2 : kernel_name) =
     if kn1 == kn2 then 0
     else
-      let mp1,dir1,l1 = kn1 and mp2,dir2,l2 = kn2 in
-      let c = String.compare l1 l2 in
+      let c = String.compare kn1.knlabel kn2.knlabel in
       if not (Int.equal c 0) then c
       else
-        let c = DirPath.compare dir1 dir2 in
+        let c = DirPath.compare kn1.dirpath kn2.dirpath in
         if not (Int.equal c 0) then c
-        else ModPath.compare mp1 mp2
+        else ModPath.compare kn1.modpath kn2.modpath
 
   let equal kn1 kn2 = Int.equal (compare kn1 kn2) 0
 
   open Hashset.Combine
 
-  let hash (mp, dp, lbl) =
-    combine3 (ModPath.hash mp) (DirPath.hash dp) (Label.hash lbl)
+  let hash kn =
+    let h = kn.refhash in
+    if h < 0 then
+      let { modpath = mp; dirpath = dp; knlabel = lbl; } = kn in
+      let h = combine3 (ModPath.hash mp) (DirPath.hash dp) (Label.hash lbl) in
+      (* Ensure positivity on all platforms. *)
+      let h = h land 0x3FFFFFFF in
+      let () = kn.refhash <- h in
+      h
+    else h
 
   module Self_Hashcons = struct
     type t = kernel_name
     type u = (ModPath.t -> ModPath.t) * (DirPath.t -> DirPath.t)
         * (string -> string)
-    let hashcons (hmod,hdir,hstr) (mp,dir,l) =
-      (hmod mp,hdir dir,hstr l)
-    let equal (mp1,dir1,l1) (mp2,dir2,l2) =
-      mp1 == mp2 && dir1 == dir2 && l1 == l2
+    let hashcons (hmod,hdir,hstr) kn =
+      let { modpath = mp; dirpath = dp; knlabel = l; refhash; } = kn in
+      { modpath = hmod mp; dirpath = hdir dp; knlabel = hstr l; refhash; canary; }
+    let equal kn1 kn2 =
+      kn1.modpath == kn2.modpath && kn1.dirpath == kn2.dirpath &&
+        kn1.knlabel == kn2.knlabel
     let hash = hash
   end
 
@@ -390,9 +409,9 @@ module KerName = struct
 
 end
 
-module KNmap = CMap.Make(KerName)
+module KNmap = HMap.Make(KerName)
 module KNpred = Predicate.Make(KerName)
-module KNset = Set.Make(KerName)
+module KNset = KNmap.Set
 
 (** {6 Kernel pairs } *)
 
@@ -428,7 +447,6 @@ module KerPair = struct
     | Dual (kn,_) -> kn
 
   let same kn = Same kn
-  let dual knu knc = Dual (knu,knc)
   let make knu knc = if knu == knc then Same knc else Dual (knu,knc)
 
   let make1 = same
@@ -466,12 +484,14 @@ module KerPair = struct
     type t = kernel_pair
     let compare x y = KerName.compare (user x) (user y)
     let equal x y = x == y || KerName.equal (user x) (user y)
+    let hash x = KerName.hash (user x)
   end
 
   module CanOrd = struct
     type t = kernel_pair
     let compare x y = KerName.compare (canonical x) (canonical y)
     let equal x y = x == y || KerName.equal (canonical x) (canonical y)
+    let hash x = KerName.hash (canonical x)
   end
 
   (** Default comparison is on the canonical part *)
@@ -480,8 +500,6 @@ module KerPair = struct
   (** Hash-consing : we discriminate only on the user part, since having
       the same user part implies having the same canonical part
       (invariant of the system). *)
-
-  open Hashset.Combine
 
   let hash = function
   | Same kn -> KerName.hash kn
@@ -506,19 +524,19 @@ end
 
 module Constant = KerPair
 
-module Cmap = CMap.Make(Constant.CanOrd)
-module Cmap_env = CMap.Make(Constant.UserOrd)
+module Cmap = HMap.Make(Constant.CanOrd)
+module Cmap_env = HMap.Make(Constant.UserOrd)
 module Cpred = Predicate.Make(Constant.CanOrd)
-module Cset = Set.Make(Constant.CanOrd)
-module Cset_env = Set.Make(Constant.UserOrd)
+module Cset = Cmap.Set
+module Cset_env = Cmap_env.Set
 
 (** {6 Names of mutual inductive types } *)
 
 module MutInd = KerPair
 
-module Mindmap = CMap.Make(MutInd.CanOrd)
-module Mindset = Set.Make(MutInd.CanOrd)
-module Mindmap_env = Map.Make(MutInd.UserOrd)
+module Mindmap = HMap.Make(MutInd.CanOrd)
+module Mindset = Mindmap.Set
+module Mindmap_env = HMap.Make(MutInd.UserOrd)
 
 (** Beware: first inductive has index 0 *)
 (** Beware: first constructor has index 1 *)
@@ -543,6 +561,8 @@ let ind_user_ord (m1, i1) (m2, i2) =
   if Int.equal c 0 then MutInd.UserOrd.compare m1 m2 else c
 let ind_hash (m, i) =
   Hashset.Combine.combine (MutInd.hash m) (Int.hash i)
+let ind_user_hash (m, i) =
+  Hashset.Combine.combine (MutInd.UserOrd.hash m) (Int.hash i)
 
 let eq_constructor (ind1, j1) (ind2, j2) = Int.equal j1 j2 && eq_ind ind1 ind2
 let constructor_ord (ind1, j1) (ind2, j2) =
@@ -553,6 +573,8 @@ let constructor_user_ord (ind1, j1) (ind2, j2) =
   if Int.equal c 0 then ind_user_ord ind1 ind2 else c
 let constructor_hash (ind, i) =
   Hashset.Combine.combine (ind_hash ind) (Int.hash i)
+let constructor_user_hash (ind, i) =
+  Hashset.Combine.combine (ind_user_hash ind) (Int.hash i)
 
 module InductiveOrdered = struct
   type t = inductive
@@ -725,7 +747,6 @@ let label = KerName.label
 let string_of_kn = KerName.to_string
 let pr_kn = KerName.print
 let kn_ord = KerName.compare
-let kn_equal = KerName.equal
 
 (** Compatibility layer for [Constant] *)
 

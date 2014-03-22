@@ -52,6 +52,12 @@ let version () =
 let rec read_all_lines in_chan =
   try
     let arg = input_line in_chan in
+    let len = String.length arg  in
+    let arg =
+      if arg.[len - 1] = '\r' then
+	String.sub arg 0 (len - 1)
+      else arg
+    in
     arg::(read_all_lines in_chan)
   with End_of_file -> []
 
@@ -409,6 +415,8 @@ let spawn_handle args respawner feedback_processor =
 let clear_handle h =
   if h.alive then begin
     (* invalidate the old handle *)
+    CoqTop.kill h.proc;
+    ignore(CoqTop.wait h.proc);
     h.alive <- false;
   end
 
@@ -503,7 +511,6 @@ let eval_call ?(logger=default_logger) call handle k =
 let add ?(logger=default_logger) x = eval_call ~logger (Serialize.add x)
 let edit_at i = eval_call (Serialize.edit_at i)
 let query ?(logger=default_logger) x = eval_call ~logger (Serialize.query x)
-let inloadpath s = eval_call (Serialize.inloadpath s)
 let mkcases s = eval_call (Serialize.mkcases s)
 let status ?logger force = eval_call ?logger (Serialize.status force)
 let hints x = eval_call (Serialize.hints x)

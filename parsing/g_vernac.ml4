@@ -8,7 +8,6 @@
 
 open Pp
 open Compat
-open Tok
 open Errors
 open Util
 open Names
@@ -16,10 +15,9 @@ open Constrexpr
 open Constrexpr_ops
 open Extend
 open Vernacexpr
-open Locality
 open Decl_kinds
-open Declaremods
 open Misctypes
+open Tok (* necessary for camlp4 *)
 
 open Pcoq
 open Pcoq.Tactic
@@ -629,10 +627,10 @@ GEXTEND Gram
            error "All arguments lists must have the same length";
          let err_incompat x y =
            error ("Options \""^x^"\" and \""^y^"\" are incompatible") in
-         if nargs > 0 && List.mem `SimplNeverUnfold mods then
+         if nargs > 0 && List.mem `ReductionNeverUnfold mods then
            err_incompat "simpl never" "/";
-         if List.mem `SimplNeverUnfold mods &&
-            List.mem `SimplDontExposeCase mods then
+         if List.mem `ReductionNeverUnfold mods &&
+            List.mem `ReductionDontExposeCase mods then
            err_incompat "simpl never" "simpl nomatch";
          VernacArguments (qid, impl, nargs, mods)
 
@@ -665,8 +663,8 @@ GEXTEND Gram
 	     VernacGeneralizable gen ] ]
   ;
   arguments_modifier:
-    [ [ IDENT "simpl"; IDENT "nomatch" -> [`SimplDontExposeCase]
-      | IDENT "simpl"; IDENT "never" -> [`SimplNeverUnfold]
+    [ [ IDENT "simpl"; IDENT "nomatch" -> [`ReductionDontExposeCase]
+      | IDENT "simpl"; IDENT "never" -> [`ReductionNeverUnfold]
       | IDENT "default"; IDENT "implicits" -> [`DefaultImplicits]
       | IDENT "clear"; IDENT "implicits" -> [`ClearImplicits]
       | IDENT "clear"; IDENT "scopes" -> [`ClearScopes]
@@ -880,8 +878,9 @@ GEXTEND Gram
       | IDENT "Assumptions"; qid = smart_global -> PrintAssumptions (false, false, qid)
       | IDENT "Opaque"; IDENT "Dependencies"; qid = smart_global -> PrintAssumptions (true, false, qid)
       | IDENT "Transparent"; IDENT "Dependencies"; qid = smart_global -> PrintAssumptions (false, true, qid)
-      | IDENT "All"; IDENT "Dependencies"; qid = smart_global -> PrintAssumptions (true, true, qid) ] ]
-
+      | IDENT "All"; IDENT "Dependencies"; qid = smart_global -> PrintAssumptions (true, true, qid)
+      | IDENT "Strategy"; qid = smart_global -> PrintStrategy (Some qid)
+      | IDENT "Strategies" -> PrintStrategy None ] ]
   ;
   class_rawexpr:
     [ [ IDENT "Funclass" -> FunClass

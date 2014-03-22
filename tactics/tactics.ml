@@ -26,7 +26,6 @@ open Pfedit
 open Tacred
 open Genredexpr
 open Tacmach
-open Proof_type
 open Logic
 open Clenv
 open Clenvtac
@@ -43,7 +42,6 @@ open Unification
 open Locus
 open Locusops
 open Misctypes
-open Miscops
 open Proofview.Notations
 
 exception Bound
@@ -69,13 +67,10 @@ let typ_of = Retyping.get_type_of
 (* Option for 8.2 compatibility *)
 open Goptions
 let dependent_propositions_elimination = ref true
-let tactic_compat_context = ref false
 
 let use_dependent_propositions_elimination () =
   !dependent_propositions_elimination
   && Flags.version_strictly_greater Flags.V8_2
-
-let use_tactic_context_compat () = !tactic_compat_context
 
 let _ =
   declare_bool_option
@@ -174,7 +169,6 @@ let internal_cut_rev_gen b d t gl =
   with Evarutil.ClearDependencyError (id,err) ->
     error_clear_dependency (pf_env gl) id err
 
-let internal_cut_rev = internal_cut_rev_gen false
 let internal_cut_rev_replace = internal_cut_rev_gen true
 
 (* Moving hypotheses *)
@@ -193,6 +187,9 @@ let fresh_id_in_env avoid id env =
 
 let fresh_id avoid id gl =
   fresh_id_in_env avoid id (pf_env gl)
+
+let new_fresh_id avoid id gl =
+  fresh_id_in_env avoid id (Proofview.Goal.env gl)
 
 (**************************************************************)
 (*          Fixpoints and CoFixpoints                         *)
@@ -350,7 +347,6 @@ let change chg c cls gl =
     cls gl
 
 (* Pour usage interne (le niveau User est pris en compte par reduce) *)
-let try_red_in_concl    = reduct_in_concl (try_red_product,REVERTcast)
 let red_in_concl        = reduct_in_concl (red_product,REVERTcast)
 let red_in_hyp          = reduct_in_hyp   red_product
 let red_option          = reduct_option   (red_product,REVERTcast)
@@ -429,12 +425,11 @@ let find_name loc decl x gl = match x with
       (* this case must be compatible with [find_intro_names] below. *)
       let env = Proofview.Goal.env gl in
       let sigma = Proofview.Goal.sigma gl in
-      Tacmach.New.of_old (fresh_id idl (default_id env sigma decl)) gl
-  | IntroBasedOn (id,idl) ->  Tacmach.New.of_old (fresh_id idl id) gl
+      new_fresh_id idl (default_id env sigma decl) gl
+  | IntroBasedOn (id,idl) ->  new_fresh_id idl id gl
   | IntroMustBe id ->
       (* When name is given, we allow to hide a global name *)
-      let hyps = Proofview.Goal.hyps gl in
-      let ids_of_hyps = ids_of_named_context hyps in
+      let ids_of_hyps = Tacmach.New.pf_ids_of_hyps gl in
       let id' = next_ident_away id ids_of_hyps in
       if not (Id.equal id' id) then user_err_loc (loc,"",pr_id id ++ str" is already used.");
       id'
@@ -460,8 +455,9 @@ let build_intro_tac id dest tac = match dest with
   | dest -> Tacticals.New.tclTHENLIST [Proofview.V82.tactic (introduction id); Proofview.V82.tactic (move_hyp true id dest); tac id]
 
 let rec intro_then_gen loc name_flag move_flag force_flag dep_flag tac =
-  Proofview.Goal.enter begin fun gl ->
-    let concl = Proofview.Goal.concl gl in
+  Proofview.Goal.raw_enter begin fun gl ->
+    let concl = Proofview.Goal.concl (Proofview.Goal.assume gl) in
+    let concl = nf_evar (Proofview.Goal.sigma gl) concl in
     match kind_of_term concl with
     | Prod (name,t,u) when not dep_flag || (dependent (mkRel 1) u) ->
         let name = find_name loc (name,None,t) name_flag gl in
@@ -1416,7 +1412,7 @@ let my_find_eq_data_decompose gl t =
   with e when is_anomaly e
     (* Hack in case equality is not yet defined... one day, maybe,
        known equalities will be dynamically registered *)
-      -> raise Matching.PatternMatchingFailure
+      -> raise ConstrMatching.PatternMatchingFailure
 
 let intro_decomp_eq loc b l l' thin tac id gl =
   let c = mkVar id in
@@ -1983,7 +1979,7 @@ let letin_tac_gen with_eq name (sigmac,c) test ty occs =
 let make_eq_test c = (make_eq_test c,fun _ -> c)
 
 let letin_tac with_eq name c ty occs =
-  Proofview.tclEVARMAP >= fun sigma ->
+  Proofview.tclEVARMAP >>= fun sigma ->
   letin_tac_gen with_eq name (sigma,c) (make_eq_test c) ty (occs,true)
 
 let letin_pat_tac with_eq name c ty occs =
@@ -2085,7 +2081,7 @@ let check_unused_names names =
   if not (List.is_empty names) && Flags.is_verbose () then
     msg_warning
       (str"Unused introduction " ++ str (String.plural (List.length names) "pattern")
-       ++ str": " ++ prlist_with_sep spc pr_intro_pattern names)
+       ++ str": " ++ prlist_with_sep spc Miscprint.pr_intro_pattern names)
 
 let rec consume_pattern avoid id isdep gl = function
   | [] -> ((dloc, IntroIdentifier (fresh_id avoid id gl)), [])
@@ -3092,7 +3088,7 @@ let find_elim_signature isrec elim hyp0 gl =
 let is_functional_induction elim gl =
   match elim with
   | Some elimc ->
-      let scheme = compute_elim_sig ~elimc (pf_type_of gl (fst elimc)) in
+      let scheme = compute_elim_sig ~elimc (Tacmach.New.pf_type_of gl (fst elimc)) in
       (* The test is not safe: with non-functional induction on non-standard
          induction scheme, this may fail *)
       Option.is_empty scheme.indarg
@@ -3182,9 +3178,9 @@ let apply_induction_with_discharge induct_tac elim indhyps destopt avoid names t
    hypotheses from the context *)
 
 let apply_induction_in_context hyp0 elim indvars names induct_tac =
-  Proofview.Goal.enter begin fun gl ->
+  Proofview.Goal.raw_enter begin fun gl ->
     let env = Proofview.Goal.env gl in
-    let concl = Proofview.Goal.concl gl in
+    let concl = Tacmach.New.pf_nf_concl gl in
     let statuslists,lhyp0,indhyps,deps = cook_sign hyp0 indvars env in
     let deps = List.map (on_pi3 refresh_universes_strict) deps in
     let tmpcl = it_mkNamedProd_or_LetIn concl deps in
@@ -3351,16 +3347,16 @@ let new_induct_gen isrec with_evars elim (eqname,names) (sigma,(c,lbind)) cls =
 	  (induction_with_atomization_of_ind_arg
 	    isrec with_evars elim names (id,lbind) inhyps)
     | _        ->
-        Proofview.Goal.enter begin fun gl ->
+        Proofview.Goal.raw_enter begin fun gl ->
           let defs = Proofview.Goal.sigma gl in
           let env = Proofview.Goal.env gl in
 	  let x = id_of_name_using_hdchar (Global.env()) (typ_of env sigma c)
 	        Anonymous in
-          let id = Tacmach.New.of_old (fresh_id [] x) gl in
+          let id = new_fresh_id [] x gl in
 	(* We need the equality name now *)
 	  let with_eq = Option.map (fun eq -> (false,eq)) eqname in
 	(* TODO: if ind has predicate parameters, use JMeq instead of eq *)
-          Proofview.Goal.enter begin fun gl ->
+          Proofview.Goal.raw_enter begin fun gl ->
             let env = Proofview.Goal.env gl in
 	    Tacticals.New.tclTHEN
             (* Warning: letin is buggy when c is not of inductive type *)
@@ -3380,7 +3376,7 @@ let new_induct_gen isrec with_evars elim (eqname,names) (sigma,(c,lbind)) cls =
 let new_induct_gen_l isrec with_evars elim (eqname,names) lc =
   if not (Option.is_empty eqname) then
     errorlabstrm "" (str "Do not know what to do with " ++
-      pr_intro_pattern (Option.get eqname));
+      Miscprint.pr_intro_pattern (Option.get eqname));
   let newlc = ref [] in
   let letids = ref [] in
   let rec atomize_list l =
@@ -3394,13 +3390,13 @@ let new_induct_gen_l isrec with_evars elim (eqname,names) lc =
 		atomize_list l'
 
 	    | _ ->
-                Proofview.Goal.enter begin fun gl ->
+                Proofview.Goal.raw_enter begin fun gl ->
                 let type_of = Tacmach.New.pf_type_of gl in
 		try (* type_of can raise an exception *)
                 let x =
 		  id_of_name_using_hdchar (Global.env()) (type_of c) Anonymous in
 
-                let id = Tacmach.New.of_old (fresh_id [] x) gl in
+                let id = new_fresh_id [] x gl in
 		let newl' = List.map (replace_term c (mkVar id)) l' in
 		let _ = newlc:=id::!newlc in
 		let _ = letids:=id::!letids in
@@ -3412,7 +3408,7 @@ let new_induct_gen_l isrec with_evars elim (eqname,names) lc =
   Tacticals.New.tclTHENLIST
     [
       (atomize_list lc);
-      (Proofview.tclUNIT () >= fun () -> (* recompute each time to have the new value of newlc *)
+      (Proofview.tclUNIT () >>= fun () -> (* recompute each time to have the new value of newlc *)
 	induction_without_atomization isrec with_evars elim names !newlc) ;
       (* after induction, try to unfold all letins created by atomize_list
          FIXME: unfold_all does not exist anywhere else? *)
@@ -3427,8 +3423,8 @@ let new_induct_gen_l isrec with_evars elim (eqname,names) lc =
    args *)
 let induct_destruct isrec with_evars (lc,elim,names,cls) =
   assert (List.length lc > 0); (* ensured by syntax, but if called inside caml? *)
-  Proofview.Goal.enter begin fun gl ->
-  let ifi = Tacmach.New.of_old (is_functional_induction elim) gl in
+  Proofview.Goal.raw_enter begin fun gl ->
+  let ifi = is_functional_induction elim gl in
   if Int.equal (List.length lc) 1 && not ifi then
     (* standard induction *)
     onOpenInductionArg
@@ -3618,18 +3614,21 @@ let dImp cls =
 
 let (forward_setoid_reflexivity, setoid_reflexivity) = Hook.make ()
 
+let maybe_betadeltaiota_concl allowred gl =
+  let concl = Proofview.Goal.concl (Proofview.Goal.assume gl) in
+  let sigma = Proofview.Goal.sigma gl in
+  let concl = nf_evar sigma concl in
+  if not allowred then concl
+  else
+    let env = Proofview.Goal.env gl in
+    whd_betadeltaiota env sigma concl
+
 let reflexivity_red allowred =
-  Proofview.Goal.enter begin fun gl ->
+  Proofview.Goal.raw_enter begin fun gl ->
   (* PL: usual reflexivity don't perform any reduction when searching
      for an equality, but we may need to do some when called back from
      inside setoid_reflexivity (see Optimize cases in setoid_replace.ml). *)
-  let concl = if not allowred then Proofview.Goal.concl gl
-    else
-      let c = Proofview.Goal.concl gl in
-      let env = Proofview.Goal.env gl in
-      let sigma = Proofview.Goal.sigma gl in
-      whd_betadeltaiota env sigma c
-  in
+    let concl = maybe_betadeltaiota_concl allowred gl in
     match match_with_equality_type concl with
     | None -> Proofview.tclZERO NoEquationFound
     | Some _ -> one_constructor 1 NoBindings
@@ -3675,20 +3674,12 @@ let match_with_equation c =
     Proofview.tclZERO NoEquationFound
 
 let symmetry_red allowred =
-  Proofview.Goal.enter begin fun gl ->
+  Proofview.Goal.raw_enter begin fun gl ->
   (* PL: usual symmetry don't perform any reduction when searching
      for an equality, but we may need to do some when called back from
      inside setoid_reflexivity (see Optimize cases in setoid_replace.ml). *)
-  let concl =
-    if not allowred then
-      Proofview.Goal.concl gl
-    else
-      let c = Proofview.Goal.concl gl in
-      let env = Proofview.Goal.env gl in
-      let sigma = Proofview.Goal.sigma gl in
-      whd_betadeltaiota env sigma c
-  in
-  match_with_equation concl >= fun with_eqn ->
+  let concl = maybe_betadeltaiota_concl allowred gl in
+  match_with_equation concl >>= fun with_eqn ->
   match with_eqn with
   | Some eq_data,_,_ ->
       Proofview.V82.tactic begin
@@ -3711,14 +3702,14 @@ let (forward_setoid_symmetry_in, setoid_symmetry_in) = Hook.make ()
 
 
 let symmetry_in id =
-  Proofview.Goal.enter begin fun gl ->
+  Proofview.Goal.raw_enter begin fun gl ->
   let type_of = Tacmach.New.pf_type_of gl in
   try (* type_of can raise an exception *)
   let ctype = type_of (mkVar id) in
   let sign,t = decompose_prod_assum ctype in
   Proofview.tclORELSE
     begin
-      match_with_equation t >= fun (_,hdcncl,eq) ->
+      match_with_equation t >>= fun (_,hdcncl,eq) ->
         let symccl = match eq with
           | MonomorphicLeibnizEq (c1,c2) -> mkApp (hdcncl, [| c2; c1 |])
           | PolymorphicLeibnizEq (typ,c1,c2) -> mkApp (hdcncl, [| typ; c2; c1 |])
@@ -3757,7 +3748,7 @@ let (forward_setoid_transitivity, setoid_transitivity) = Hook.make ()
 
 (* This is probably not very useful any longer *)
 let prove_transitivity hdcncl eq_kind t =
-  Proofview.Goal.enter begin fun gl ->
+  Proofview.Goal.raw_enter begin fun gl ->
   let (eq1,eq2) = match eq_kind with
   | MonomorphicLeibnizEq (c1,c2) ->
       mkApp (hdcncl, [| c1; t|]), mkApp (hdcncl, [| t; c2 |])
@@ -3780,20 +3771,12 @@ let prove_transitivity hdcncl eq_kind t =
   end
 
 let transitivity_red allowred t =
-  Proofview.Goal.enter begin fun gl ->
+  Proofview.Goal.raw_enter begin fun gl ->
   (* PL: usual transitivity don't perform any reduction when searching
      for an equality, but we may need to do some when called back from
      inside setoid_reflexivity (see Optimize cases in setoid_replace.ml). *)
-  let concl =
-    if not allowred then
-      Proofview.Goal.concl gl
-    else
-      let c = Proofview.Goal.concl gl in
-      let env = Proofview.Goal.env gl in
-      let sigma = Proofview.Goal.sigma gl in
-      whd_betadeltaiota env sigma c
-  in
-  match_with_equation concl >= fun with_eqn ->
+  let concl = maybe_betadeltaiota_concl allowred gl in
+  match_with_equation concl >>= fun with_eqn ->
   match with_eqn with
   | Some eq_data,_,_ ->
       Proofview.V82.tactic begin
@@ -3885,7 +3868,7 @@ let tclABSTRACT name_op tac gl =
 
 
 let admit_as_an_axiom =
-  Proofview.tclUNIT () >= fun () -> (* delay for Coqlib.build_coq_proof_admitted *)
+  Proofview.tclUNIT () >>= fun () -> (* delay for Coqlib.build_coq_proof_admitted *)
   simplest_case (Coqlib.build_coq_proof_admitted ()) <*>
   Proofview.mark_as_unsafe
 
@@ -3937,11 +3920,12 @@ module New = struct
     let c = Goal.Refinable.make begin fun h ->
       Goal.Refinable.constr_of_open_constr h true c
     end in
-    Proofview.Goal.lift c >>= fun c ->
-    Proofview.tclSENSITIVE (Goal.refine c) <*>
-    Proofview.V82.tactic (reduce
-       (Lazy {rBeta=true;rIota=true;rZeta=false;rDelta=false;rConst=[]})
-       {onhyps=None; concl_occs=AllOccurrences }
-    )
+    Proofview.Goal.lift c begin fun c ->
+      Proofview.tclSENSITIVE (Goal.refine c) <*>
+      Proofview.V82.tactic (reduce
+         (Lazy {rBeta=true;rIota=true;rZeta=false;rDelta=false;rConst=[]})
+         {onhyps=None; concl_occs=AllOccurrences }
+      )
+    end
 
 end

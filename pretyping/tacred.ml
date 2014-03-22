@@ -16,13 +16,11 @@ open Libnames
 open Globnames
 open Termops
 open Namegen
-open Libobject
 open Environ
 open Closure
 open Reductionops
 open Cbv
 open Patternops
-open Matching
 open Locus
 
 (* Errors *)
@@ -425,7 +423,7 @@ let substl_checking_arity env subst sigma c =
 type fix_reduction_result = NotReducible | Reduced of (constr*constr list)
 
 let reduce_fix whdfun sigma fix stack =
-  match fix_recarg fix [Zapp stack] with
+  match fix_recarg fix (Stack.append_app_list stack Stack.empty) with
     | None -> NotReducible
     | Some (recargnum,recarg) ->
         let (recarg'hd,_ as recarg') = whdfun sigma recarg in
@@ -442,7 +440,7 @@ let contract_fix_use_function env sigma f
   substl_checking_arity env (List.rev lbodies) sigma (nf_beta sigma bodies.(bodynum))
 
 let reduce_fix_use_function env sigma f whfun fix stack =
-  match fix_recarg fix [Zapp stack] with
+  match fix_recarg fix (Stack.append_app_list stack Stack.empty) with
     | None -> NotReducible
     | Some (recargnum,recarg) ->
         let (recarg'hd,_ as recarg') =
@@ -521,87 +519,16 @@ let special_red_case env sigma whfun (ci, p, c, lf)  =
   in
   redrec c
 
-(* data structure to hold the map kn -> rec_args for simpl *)
+let recargs = function
+  | EvalVar _ | EvalRel _ | EvalEvar _ -> None
+  | EvalConst c -> Option.map (fun (x,y,_) -> (x,y))
+			      (ReductionBehaviour.get (ConstRef c))
 
-type behaviour = {
-  b_nargs: int;
-  b_recargs: int list;
-  b_dont_expose_case: bool;
-}
-
-let behaviour_table =
-  Summary.ref (Refmap.empty : behaviour Refmap.t) ~name:"simplbehaviour"
-
-type simpl_flag = [ `SimplDontExposeCase | `SimplNeverUnfold ]
-type req =
-  | ReqLocal
-  | ReqGlobal of global_reference * (int list * int * simpl_flag list)
-
-let load_simpl_behaviour _ (_,(_,(r, b))) =
-  behaviour_table := Refmap.add r b !behaviour_table
-
-let cache_simpl_behaviour o = load_simpl_behaviour 1 o
-
-let classify_simpl_behaviour = function
-  | ReqLocal, _ -> Dispose
-  | ReqGlobal _, _ as o -> Substitute o
-
-let subst_simpl_behaviour (subst, (_, (r,o as orig))) =
-  ReqLocal,
-  let r' = fst (subst_global subst r) in if r==r' then orig else (r',o)
-
-let discharge_simpl_behaviour = function
-  | _,(ReqGlobal (ConstRef c, req), (_, b)) ->
-     let c' = pop_con c in
-     let vars = Lib.section_segment_of_constant c in
-     let extra = List.length vars in
-     let nargs' = if b.b_nargs < 0 then b.b_nargs else b.b_nargs + extra in
-     let recargs' = List.map ((+) extra) b.b_recargs in
-     let b' = { b with b_nargs = nargs'; b_recargs = recargs' } in
-     Some (ReqGlobal (ConstRef c', req), (ConstRef c', b'))
-  | _ -> None
-
-let rebuild_simpl_behaviour = function
-  | req, (ConstRef c, _ as x) -> req, x
-  | _ -> assert false
-
-let inSimplBehaviour = declare_object { (default_object "SIMPLBEHAVIOUR") with
-  load_function = load_simpl_behaviour;
-  cache_function = cache_simpl_behaviour;
-  classify_function = classify_simpl_behaviour;
-  subst_function = subst_simpl_behaviour;
-  discharge_function = discharge_simpl_behaviour;
-  rebuild_function = rebuild_simpl_behaviour;
-}
-
-let set_simpl_behaviour local r (recargs, nargs, flags as req) =
-  let nargs = if List.mem `SimplNeverUnfold flags then max_int else nargs in
-  let behaviour = {
-    b_nargs = nargs; b_recargs = recargs;
-    b_dont_expose_case = List.mem `SimplDontExposeCase flags } in
-  let req = if local then ReqLocal else ReqGlobal (r, req) in
-  Lib.add_anonymous_leaf (inSimplBehaviour (req, (r, behaviour)))
-;;
-
-let get_simpl_behaviour r =
-  try
-    let b = Refmap.find r !behaviour_table in
-    let flags =
-      if Int.equal b.b_nargs max_int then [`SimplNeverUnfold]
-      else if b.b_dont_expose_case then [`SimplDontExposeCase] else [] in
-    Some (b.b_recargs, (if Int.equal b.b_nargs max_int then -1 else b.b_nargs), flags)
-  with Not_found -> None
-
-let get_behaviour = function
-  | EvalVar _ | EvalRel _ | EvalEvar _ -> raise Not_found
-  | EvalConst c -> Refmap.find (ConstRef c) !behaviour_table
-
-let recargs r =
-  try let b = get_behaviour r in Some (b.b_recargs, b.b_nargs)
-  with Not_found -> None
-
-let dont_expose_case r =
-  try (get_behaviour r).b_dont_expose_case with Not_found -> false
+let dont_expose_case = function
+  | EvalVar _ | EvalRel _ | EvalEvar _ -> false
+  | EvalConst c ->
+     Option.cata (fun (_,_,z) -> List.mem `ReductionDontExposeCase z)
+		 false (ReductionBehaviour.get (ConstRef c))
 
 let whd_nothing_for_iota env sigma s =
   let rec whrec (x, stack as s) =
@@ -626,15 +553,15 @@ let whd_nothing_for_iota env sigma s =
 	     | None -> s)
       | LetIn (_,b,_,c) -> stacklam whrec [b] c stack
       | Cast (c,_,_) -> whrec (c, stack)
-      | App (f,cl)  -> whrec (f, append_stack_app cl stack)
+      | App (f,cl)  -> whrec (f, Stack.append_app cl stack)
       | Lambda (na,t,c) ->
-          (match decomp_stack stack with
+          (match Stack.decomp stack with
              | Some (a,m) -> stacklam whrec [a] c m
 	     | _ -> s)
 
       | x -> s
   in
-  decompose_app (zip (whrec (s,empty_stack)))
+  decompose_app (Stack.zip (whrec (s,Stack.empty)))
 
 (* [red_elim_const] contracts iota/fix/cofix redexes hidden behind
    constants by keeping the name of the constants in the recursive calls;
@@ -764,13 +691,13 @@ let try_red_product env sigma c =
       | App (f,l) ->
           (match kind_of_term f with
              | Fix fix ->
-                 let stack = append_stack_app l empty_stack in
+                 let stack = Stack.append_app l Stack.empty in
                  (match fix_recarg fix stack with
                     | None -> raise Redelimination
                     | Some (recargnum,recarg) ->
                         let recarg' = redrec env recarg in
-                        let stack' = stack_assign stack recargnum recarg' in
-                        simpfun (zip (f,stack')))
+                        let stack' = Stack.assign stack recargnum recarg' in
+                        simpfun (Stack.zip (f,stack')))
              | _ -> simpfun (appvect (redrec env f, l)))
       | Cast (c,_,_) -> redrec env c
       | Prod (x,a,b) -> mkProd (x, a, redrec (push_rel (x,None,a) env) b)
@@ -875,8 +802,8 @@ let simpl env sigma c = strong whd_simpl env sigma c
 
 let matches_head c t =
   match kind_of_term t with
-    | App (f,_) -> matches c f
-    | _ -> raise PatternMatchingFailure
+    | App (f,_) -> ConstrMatching.matches c f
+    | _ -> raise ConstrMatching.PatternMatchingFailure
 
 let contextually byhead (occs,c) f env sigma t =
   let (nowhere_except_in,locs) = Locusops.convert_occs occs in
@@ -886,7 +813,8 @@ let contextually byhead (occs,c) f env sigma t =
     if nowhere_except_in && (!pos > maxocc) then t
     else
     try
-      let subst = if byhead then matches_head c t else matches c t in
+      let subst =
+        if byhead then matches_head c t else ConstrMatching.matches c t in
       let ok =
 	if nowhere_except_in then Int.List.mem !pos locs
 	else not (Int.List.mem !pos locs) in
@@ -900,7 +828,7 @@ let contextually byhead (occs,c) f env sigma t =
 	mkApp (f, Array.map_left (traverse envc) l)
       else
 	t
-    with PatternMatchingFailure ->
+    with ConstrMatching.PatternMatchingFailure ->
       map_constr_with_binders_left_to_right
 	(fun d (env,c) -> (push_rel d env,lift_pattern 1 c))
         traverse envc t

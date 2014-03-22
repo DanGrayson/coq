@@ -18,133 +18,154 @@ open Globnames
 
 let dnet_depth = ref 8
 
+type term_label =
+| GRLabel of global_reference
+| ProdLabel
+| LambdaLabel
+| SortLabel
+
+let compare_term_label t1 t2 = match t1, t2 with
+| GRLabel gr1, GRLabel gr2 -> RefOrdered.compare gr1 gr2
+| _ -> Pervasives.compare t1 t2 (** OK *)
+
+type 'res lookup_res = 'res Dn.lookup_res = Label of 'res | Nothing | Everything
+
+let decomp_pat =
+  let rec decrec acc = function
+    | PApp (f,args) -> decrec (Array.to_list args @ acc) f
+    | c -> (c,acc)
+  in
+  decrec []
+
+let decomp =
+  let rec decrec acc c = match kind_of_term c with
+    | App (f,l) -> decrec (Array.fold_right (fun a l -> a::l) l acc) f
+    | Cast (c1,_,_) -> decrec acc c1
+    | _ -> (c,acc)
+  in
+    decrec []
+
+let constr_val_discr t =
+  let c, l = decomp t in
+    match kind_of_term c with
+    | Ind ind_sp -> Label(GRLabel (IndRef ind_sp),l)
+    | Construct cstr_sp -> Label(GRLabel (ConstructRef cstr_sp),l)
+    | Var id -> Label(GRLabel (VarRef id),l)
+    | Const _ -> Everything
+    | _ -> Nothing
+
+let constr_pat_discr t =
+  if not (Patternops.occur_meta_pattern t) then
+    None
+  else
+    match decomp_pat t with
+    | PRef ((IndRef _) as ref), args
+    | PRef ((ConstructRef _ ) as ref), args -> Some (GRLabel ref,args)
+    | PRef ((VarRef v) as ref), args -> Some(GRLabel ref,args)
+    | _ -> None
+
+let constr_val_discr_st (idpred,cpred) t =
+  let c, l = decomp t in
+    match kind_of_term c with
+    | Const c -> if Cpred.mem c cpred then Everything else Label(GRLabel (ConstRef c),l)
+    | Ind ind_sp -> Label(GRLabel (IndRef ind_sp),l)
+    | Construct cstr_sp -> Label(GRLabel (ConstructRef cstr_sp),l)
+    | Var id when not (Id.Pred.mem id idpred) -> Label(GRLabel (VarRef id),l)
+    | Prod (n, d, c) -> Label(ProdLabel, [d; c])
+    | Lambda (n, d, c) -> Label(LambdaLabel, [d; c] @ l)
+    | Sort _ -> Label(SortLabel, [])
+    | Evar _ -> Everything
+    | _ -> Nothing
+
+let constr_pat_discr_st (idpred,cpred) t =
+  match decomp_pat t with
+  | PRef ((IndRef _) as ref), args
+  | PRef ((ConstructRef _ ) as ref), args -> Some (GRLabel ref,args)
+  | PRef ((VarRef v) as ref), args when not (Id.Pred.mem v idpred) ->
+      Some(GRLabel ref,args)
+  | PVar v, args when not (Id.Pred.mem v idpred) ->
+      Some(GRLabel (VarRef v),args)
+  | PRef ((ConstRef c) as ref), args when not (Cpred.mem c cpred) ->
+      Some (GRLabel ref, args)
+  | PProd (_, d, c), [] -> Some (ProdLabel, [d ; c])
+  | PLambda (_, d, c), l -> Some (LambdaLabel, [d ; c] @ l)
+  | PSort s, [] -> Some (SortLabel, [])
+  | _ -> None
+
+let bounded_constr_pat_discr_st st (t,depth) =
+  if Int.equal depth 0 then
+    None
+  else
+    match constr_pat_discr_st st t with
+      | None -> None
+      | Some (c,l) -> Some(c,List.map (fun c -> (c,depth-1)) l)
+
+let bounded_constr_val_discr_st st (t,depth) =
+  if Int.equal depth 0 then
+    Nothing
+  else
+    match constr_val_discr_st st t with
+      | Label (c,l) -> Label(c,List.map (fun c -> (c,depth-1)) l)
+      | Nothing -> Nothing
+      | Everything -> Everything
+
+let bounded_constr_pat_discr (t,depth) =
+  if Int.equal depth 0 then
+    None
+  else
+    match constr_pat_discr t with
+      | None -> None
+      | Some (c,l) -> Some(c,List.map (fun c -> (c,depth-1)) l)
+
+let bounded_constr_val_discr (t,depth) =
+  if Int.equal depth 0 then
+    Nothing
+  else
+    match constr_val_discr t with
+      | Label (c,l) -> Label(c,List.map (fun c -> (c,depth-1)) l)
+      | Nothing -> Nothing
+      | Everything -> Everything
 
 module Make =
   functor (Z : Map.OrderedType) ->
 struct
-  module Term_dn = Termdn.Make(Z)
 
-  module X = struct
-    type t = constr_pattern*int
-    let compare = Pervasives.compare 
-  end
-
- module Y = struct 
-     type t = Term_dn.term_label
-     let compare x y = 
-       let make_name n =
-	 match n with
-	 | Term_dn.GRLabel(ConstRef con) -> 
-	     Term_dn.GRLabel(ConstRef(constant_of_kn(canonical_con con)))
-	 | Term_dn.GRLabel(IndRef (kn,i)) ->
-	     Term_dn.GRLabel(IndRef(mind_of_kn(canonical_mind kn),i))
-	 | Term_dn.GRLabel(ConstructRef ((kn,i),j ))->
-	     Term_dn.GRLabel(ConstructRef((mind_of_kn(canonical_mind kn),i),j))
-	 | k -> k
-       in
-	 Pervasives.compare (make_name x) (make_name y)
+ module Y = struct
+    type t = term_label
+    let compare = compare_term_label
  end
- 
- module Dn = Dn.Make(X)(Y)(Z)
-  
+
+ module Dn = Dn.Make(Y)(Z)
+
  type t = Dn.t
 
   let create = Dn.create
 
-  let decomp = 
-    let rec decrec acc c = match kind_of_term c with
-      | App (f,l) -> decrec (Array.fold_right (fun a l -> a::l) l acc) f
-      | Cast (c1,_,_) -> decrec acc c1
-      | _ -> (c,acc)
-    in 
-      decrec []
-
-  let constr_val_discr t =
-    let c, l = decomp t in
-      match kind_of_term c with
-      | Ind ind_sp -> Dn.Label(Term_dn.GRLabel (IndRef ind_sp),l)
-      | Construct cstr_sp -> Dn.Label(Term_dn.GRLabel (ConstructRef cstr_sp),l)
-      | Var id -> Dn.Label(Term_dn.GRLabel (VarRef id),l)
-      | Const _ -> Dn.Everything
-      | _ -> Dn.Nothing
-	
-  let constr_val_discr_st (idpred,cpred) t =
-    let c, l = decomp t in
-      match kind_of_term c with
-      | Const c -> if Cpred.mem c cpred then Dn.Everything else Dn.Label(Term_dn.GRLabel (ConstRef c),l)
-      | Ind ind_sp -> Dn.Label(Term_dn.GRLabel (IndRef ind_sp),l)
-      | Construct cstr_sp -> Dn.Label(Term_dn.GRLabel (ConstructRef cstr_sp),l)
-      | Var id when not (Id.Pred.mem id idpred) -> Dn.Label(Term_dn.GRLabel (VarRef id),l)
-      | Prod (n, d, c) -> Dn.Label(Term_dn.ProdLabel, [d; c])
-      | Lambda (n, d, c) -> Dn.Label(Term_dn.LambdaLabel, [d; c] @ l)
-      | Sort _ -> Dn.Label(Term_dn.SortLabel, [])
-      | Evar _ -> Dn.Everything
-      | _ -> Dn.Nothing
-
-  let bounded_constr_pat_discr_st st (t,depth) =
-    if Int.equal depth 0 then 
-      None 
-    else
-      match Term_dn.constr_pat_discr_st st t with
-	| None -> None
-	| Some (c,l) -> Some(c,List.map (fun c -> (c,depth-1)) l)
-	    
-  let bounded_constr_val_discr_st st (t,depth) =
-    if Int.equal depth 0 then 
-      Dn.Nothing 
-    else
-      match constr_val_discr_st st t with
-	| Dn.Label (c,l) -> Dn.Label(c,List.map (fun c -> (c,depth-1)) l)
-	| Dn.Nothing -> Dn.Nothing
-	| Dn.Everything -> Dn.Everything
-
-  let bounded_constr_pat_discr (t,depth) =
-    if Int.equal depth 0 then 
-      None 
-    else
-      match Term_dn.constr_pat_discr t with
-	| None -> None
-	| Some (c,l) -> Some(c,List.map (fun c -> (c,depth-1)) l)
-	    
-  let bounded_constr_val_discr (t,depth) =
-    if Int.equal depth 0 then 
-      Dn.Nothing 
-    else
-      match constr_val_discr t with
-	| Dn.Label (c,l) -> Dn.Label(c,List.map (fun c -> (c,depth-1)) l)
-	| Dn.Nothing -> Dn.Nothing
-	| Dn.Everything -> Dn.Everything
-	    
-	    
   let add = function
-    | None -> 
-	(fun dn (c,v) -> 
+    | None ->
+	(fun dn (c,v) ->
 	   Dn.add dn bounded_constr_pat_discr ((c,!dnet_depth),v))
-    | Some st -> 
-	(fun dn (c,v) -> 
+    | Some st ->
+	(fun dn (c,v) ->
 	   Dn.add dn (bounded_constr_pat_discr_st st) ((c,!dnet_depth),v))
-	  
+
   let rmv = function
-    | None -> 
-	(fun dn (c,v) -> 
+    | None ->
+	(fun dn (c,v) ->
 	   Dn.rmv dn bounded_constr_pat_discr ((c,!dnet_depth),v))
-    | Some st -> 
-	(fun dn (c,v) -> 
+    | Some st ->
+	(fun dn (c,v) ->
 	 Dn.rmv dn (bounded_constr_pat_discr_st st) ((c,!dnet_depth),v))
-	  
+
   let lookup = function
-    | None -> 
+    | None ->
 	(fun dn t ->
-	   List.map 
-	     (fun ((c,_),v) -> (c,v)) 
-	     (Dn.lookup dn bounded_constr_val_discr (t,!dnet_depth)))
-    | Some st -> 
+	     Dn.lookup dn bounded_constr_val_discr (t,!dnet_depth))
+    | Some st ->
 	(fun dn t ->
-	   List.map 
-	     (fun ((c,_),v) -> (c,v)) 
-	     (Dn.lookup dn (bounded_constr_val_discr_st st) (t,!dnet_depth)))
-	  
-  let app f dn = Dn.app (fun ((c,_),v) -> f(c,v)) dn
-    
+	     Dn.lookup dn (bounded_constr_val_discr_st st) (t,!dnet_depth))
+
+  let app f dn = Dn.app f dn
+
 end
-    
+

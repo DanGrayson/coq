@@ -6,21 +6,19 @@
 (*         *       GNU Lesser General Public License Version 2.1        *)
 (************************************************************************)
 
-type 'a node =
+type ('a,'r) u =
 | Nil
-| Cons of 'a * 'a t
+| Cons of 'a * 'r
+
+type 'a node = ('a,'a t) u
 
 and 'a t = 'a node Lazy.t
 
-let lift (n : 'a node) : 'a t = Obj.magic n
-(** Small hack to overcome a missing optimization in OCaml compilation of lazy
-    values. *)
+let empty = Lazy.lazy_from_val Nil
 
-let empty = lift Nil
+let cons x s = Lazy.lazy_from_val (Cons (x, s))
 
-let cons x s = lift (Cons (x, s))
-
-let thunk s = lazy (Lazy.force (Lazy.force s))
+let thunk = Lazy.lazy_from_fun
 
 let rec force s = match Lazy.force s with
 | Nil -> ()
@@ -28,13 +26,11 @@ let rec force s = match Lazy.force s with
 
 let force s = force s; s
 
-let rec is_empty s = match Lazy.force s with
+let is_empty s = match Lazy.force s with
 | Nil -> true
 | Cons (_, _) -> false
 
-let peek s = match Lazy.force s with
-| Nil -> None
-| Cons (x, s) -> Some (x, s)
+let peek = Lazy.force
 
 let rec of_list = function
 | [] -> empty
@@ -80,3 +76,9 @@ let rec concat_node = function
 
 and concat (s : 'a t t) =
   lazy (concat_node (Lazy.force s))
+
+let rec concat_map_node f = function
+| Nil -> Nil
+| Cons (x,s) -> app_node (Lazy.force (f x)) (concat_map f s)
+
+and concat_map f l = lazy (concat_map_node f (Lazy.force l))

@@ -57,7 +57,7 @@ let is_unification_error = function
 | UnsolvableImplicit _| AbstractionOverMeta _ -> true
 | _ -> false
 
-let rec catchable_exception = function
+let catchable_exception = function
   | Errors.UserError _ | TypeError _
   | RefinerError _ | Indrec.RecursionSchemeError _
   | Nametab.GlobalizationError _
@@ -279,7 +279,7 @@ let move_hyp with_dep toleft (left,(idfrom,_,_ as declfrom),right) hto =
 	      (first, d::middle)
             else
 	      errorlabstrm "move_hyp" (str "Cannot move " ++ pr_id idfrom ++
-	        Miscops.pr_move_location pr_id hto ++
+	        Miscprint.pr_move_location pr_id hto ++
 	        str (if toleft then ": it occurs in " else ": it depends on ")
 	        ++ pr_id hyp ++ str ".")
           else
@@ -364,8 +364,9 @@ let rec mk_refgoals sigma goal goalacc conclty trm =
 	  assert (k != VMcast && k != NATIVEcast);
 	  res
 	end else
-	  let (gls,cty,sigma,trm) = res in
-	  (gls,cty,sigma,mkCast(trm,k,ty))
+	  let (gls,cty,sigma,ans) = res in
+          let ans = if ans == t then trm else mkCast(ans,k,ty) in
+	  (gls,cty,sigma,ans)
 
     | App (f,l) ->
 	let (acc',hdty,sigma,applicand) =
@@ -393,7 +394,12 @@ let rec mk_refgoals sigma goal goalacc conclty trm =
 	       let (r,_,s,b') = mk_refgoals sigma goal lacc ty fi in r,s,(b'::bacc))
             (acc',sigma,[]) lbrty lf
 	in
-	(acc'',conclty',sigma, Term.mkCase (ci,p',c',Array.of_list (List.rev rbranches)))
+        let lf' = Array.rev_of_list rbranches in
+        let ans =
+          if p' == p && c' == c && Array.equal (==) lf' lf then trm
+          else Term.mkCase (ci,p',c',lf')
+        in
+	(acc'',conclty',sigma, ans)
 
     | _ ->
 	if occur_meta trm then
@@ -441,7 +447,12 @@ and mk_hdgoals sigma goal goalacc trm =
 	       let (r,_,s,b') = mk_refgoals sigma goal lacc ty fi in r,s,(b'::bacc))
             (acc',sigma,[]) lbrty lf
 	in
-	(acc'',conclty',sigma, Term.mkCase (ci,p',c',Array.of_list (List.rev rbranches)))
+	let lf' = Array.rev_of_list rbranches in
+	let ans =
+          if p' == p && c' == c && Array.equal (==) lf' lf then trm
+          else Term.mkCase (ci,p',c',lf')
+	in
+	(acc'',conclty',sigma, ans)
 
     | _ ->
 	if !check && occur_meta trm then
@@ -449,25 +460,20 @@ and mk_hdgoals sigma goal goalacc trm =
 	goalacc, goal_type_of env sigma trm, sigma, trm
 
 and mk_arggoals sigma goal goalacc funty allargs =
-  let len = Array.length allargs in
-  let ans = Array.make len mkProp (** dummy *) in
-  let rec fill sigma goalacc funty i =
-    if Int.equal i len then (goalacc, funty, sigma)
-    else
-      let harg = Array.unsafe_get allargs i in
-      let t = whd_betadeltaiota (Goal.V82.env sigma goal) sigma funty in
-      match kind_of_term t with
-      | Prod (_, c1, b) ->
-        let (acc',hargty,sigma,arg') = mk_refgoals sigma goal goalacc c1 harg in
-        let (acc'',fty, sigma') = fill sigma acc' (subst1 harg b) (succ i) in
-        let () = Array.unsafe_set ans i arg' in
-        (acc'',fty,sigma')
-      | LetIn (_, c1, _, b) ->
-        fill sigma goalacc (subst1 c1 b) i
-      | _ -> raise (RefinerError (CannotApply (t,harg)))
+  let foldmap (goalacc, funty, sigma) harg =
+    let t = whd_betadeltaiota (Goal.V82.env sigma goal) sigma funty in
+    let rec collapse t = match kind_of_term t with
+    | LetIn (_, c1, _, b) -> collapse (subst1 c1 b)
+    | _ -> t
+    in
+    let t = collapse t in
+    match kind_of_term t with
+    | Prod (_, c1, b) ->
+      let (acc, hargty, sigma, arg) = mk_refgoals sigma goal goalacc c1 harg in
+      (acc, subst1 harg b, sigma), arg
+    | _ -> raise (RefinerError (CannotApply (t, harg)))
   in
-  let ans = if Array.equal (==) ans allargs then allargs else ans in
-  (fill sigma goalacc funty 0, ans)
+  Array.smartfoldmap foldmap (goalacc, funty, sigma) allargs
 
 and mk_casegoals sigma goal goalacc p c =
   let env = Goal.V82.env sigma goal in
@@ -577,7 +583,7 @@ let prim_refiner r sigma goal =
 		  ("Name "^Id.to_string f^" already used in the environment");
 	      mk_sign (push_named_context_val (f,None,ar) sign) oth
 	  | [] ->
-	      Goal.list_map (fun sigma (_,_,c) ->
+	      Evd.Monad.List.map (fun (_,_,c) sigma ->
                 let gl,ev,sig' =
                   Goal.V82.mk_goal sigma sign c (Goal.V82.extra sigma goal) in
                 (gl,ev),sig')
@@ -619,7 +625,7 @@ let prim_refiner r sigma goal =
               |	Not_found ->
                   mk_sign (push_named_context_val (f,None,ar) sign) oth)
 	  | [] -> 
-              Goal.list_map (fun sigma(_,c) ->
+              Evd.Monad.List.map (fun (_,c) sigma ->
                 let gl,ev,sigma =
                   Goal.V82.mk_goal sigma sign c (Goal.V82.extra sigma goal) in
                 (gl,ev),sigma)

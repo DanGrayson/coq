@@ -58,7 +58,7 @@ let ppevar evk = pp (str (Evd.string_of_existential evk))
 let ppconstr x = pp (Termops.print_constr x)
 let ppconstrdb x = pp(Flags.with_option rawdebug Termops.print_constr x)
 let ppterm = ppconstr
-let ppsconstr x = ppconstr (Lazyconstr.force x)
+let ppsconstr x = ppconstr (Mod_subst.force_constr x)
 let ppconstr_univ x = Constrextern.with_universes ppconstr x
 let ppglob_constr = (fun x -> pp(pr_lglob_constr x))
 let pppattern = (fun x -> pp(pr_constr_pattern x))
@@ -116,6 +116,7 @@ let prdelta s = pp (Mod_subst.debug_pr_delta s)
 let pp_idpred s = pp (pr_idpred s)
 let pp_cpred s = pp (pr_cpred s)
 let pp_transparent_state s = pp (pr_transparent_state s)
+let pp_stack_t n = pp (Reductionops.Stack.pr Termops.print_constr n)
 
 (* proof printers *)
 let pr_evar ev = Pp.int (Evar.repr ev)

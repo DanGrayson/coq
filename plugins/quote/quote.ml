@@ -107,9 +107,8 @@ open Names
 open Term
 open Pattern
 open Patternops
-open Matching
+open ConstrMatching
 open Tacmach
-open Proofview.Notations
 (*i*)
 
 (*s First, we need to access some Coq constants

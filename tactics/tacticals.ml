@@ -501,7 +501,7 @@ module New = struct
     tclREPEAT_MAIN0 (tclPROGRESS t)
 
   let tclCOMPLETE t =
-    t >= fun res ->
+    t >>= fun res ->
       (tclINDEPENDENT
          (tclZERO (Errors.UserError ("",str"Proof is not complete.")))
       ) <*>
@@ -514,7 +514,7 @@ module New = struct
     Proofview.tclINDEPENDENT (Proofview.tclPROGRESS t)
 
   let tclWITHHOLES accept_unresolved_holes tac sigma x =
-    tclEVARMAP >= fun sigma_initial ->
+    tclEVARMAP >>= fun sigma_initial ->
       if sigma == sigma_initial then tac x
       else
         let check_evars env new_sigma sigma initial_sigma =
@@ -526,8 +526,8 @@ module New = struct
         in
         let check_evars_if =
           if not accept_unresolved_holes then
-            tclEVARMAP >= fun sigma_final ->
-              tclENV >= fun env ->
+            tclEVARMAP >>= fun sigma_final ->
+              tclENV >>= fun env ->
                 check_evars env sigma_final sigma sigma_initial
           else
             tclUNIT ()
@@ -549,26 +549,24 @@ module New = struct
     with Failure _ -> Errors.error "No such assumption."
 
   let nthHypId m gl =
+    (** We only use [id] *)
+    let gl = Proofview.Goal.assume gl in
     let (id,_,_) = nthDecl m gl in
     id
   let nthHyp m gl = 
     mkVar (nthHypId m gl)
 
   let onNthHypId m tac =
-    Goal.enter begin fun gl ->
-      Proofview.tclUNIT (nthHypId m gl) >= tac
-    end
+    Proofview.Goal.raw_enter begin fun gl -> tac (nthHypId m gl) end
   let onNthHyp m tac =
-    Goal.enter begin fun gl ->
-      Proofview.tclUNIT (nthHyp m gl) >= tac
-    end
+    Proofview.Goal.raw_enter begin fun gl -> tac (nthHyp m gl) end
 
   let onLastHypId = onNthHypId 1
   let onLastHyp   = onNthHyp 1
 
   let onNthDecl m tac =
     Proofview.Goal.enter begin fun gl ->
-      Proofview.tclUNIT (nthDecl m gl) >= tac
+      Proofview.tclUNIT (nthDecl m gl) >>= tac
     end
   let onLastDecl  = onNthDecl 1
 
@@ -586,17 +584,17 @@ module New = struct
     None :: List.map Option.make hyps
 
   let tryAllHyps tac =
-    Proofview.Goal.enter begin fun gl ->
+    Proofview.Goal.raw_enter begin fun gl ->
     let hyps = Tacmach.New.pf_ids_of_hyps gl in
     tclFIRST_PROGRESS_ON tac hyps
     end
   let tryAllHypsAndConcl tac =
-    Proofview.Goal.enter begin fun gl ->
+    Proofview.Goal.raw_enter begin fun gl ->
       tclFIRST_PROGRESS_ON tac (fullGoal gl)
     end
 
   let onClause tac cl =
-    Proofview.Goal.enter begin fun gl ->
+    Proofview.Goal.raw_enter begin fun gl ->
     let hyps = Tacmach.New.pf_ids_of_hyps gl in
     tclMAP tac (Locusops.simple_clause_of (fun () -> hyps) cl)
     end

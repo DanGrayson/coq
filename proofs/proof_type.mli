@@ -6,18 +6,13 @@
 (*         *       GNU Lesser General Public License Version 2.1        *)
 (************************************************************************)
 
-open Environ
 open Evd
 open Names
-open Libnames
 open Term
 open Context
-open Pp
 open Tacexpr
 open Glob_term
-open Genarg
 open Nametab
-open Pattern
 open Misctypes
 
 (** This module defines the structure of proof tree and the tactic type. So, it
@@ -82,6 +77,6 @@ type ltac_call_kind =
   | LtacVarCall of Id.t * glob_tactic_expr
   | LtacConstrInterp of glob_constr * Pretyping.ltac_var_map
 
-type ltac_trace = (int * Loc.t * ltac_call_kind) list
+type ltac_trace = (Loc.t * ltac_call_kind) list
 
 val ltac_trace_info : ltac_trace Exninfo.t

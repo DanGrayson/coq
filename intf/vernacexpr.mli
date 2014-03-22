@@ -7,8 +7,6 @@
 (************************************************************************)
 
 open Loc
-open Pp
-open Util
 open Names
 open Tacexpr
 open Misctypes
@@ -77,6 +75,7 @@ type printable =
   | PrintAbout of reference or_by_notation
   | PrintImplicit of reference or_by_notation
   | PrintAssumptions of bool * bool * reference or_by_notation
+  | PrintStrategy of reference or_by_notation option
 
 type search_about_item =
   | SearchSubPattern of constr_pattern_expr
@@ -375,7 +374,7 @@ type vernac_expr =
       (explicitation * bool * bool) list list
   | VernacArguments of reference or_by_notation *
       ((Name.t * bool * (Loc.t * string) option * bool * bool) list) list *
-      int * [ `SimplDontExposeCase | `SimplNeverUnfold | `Rename | `ExtraScopes
+      int * [ `ReductionDontExposeCase | `ReductionNeverUnfold | `Rename | `ExtraScopes
             | `ClearImplicits | `ClearScopes | `DefaultImplicits ] list
   | VernacArgumentsScope of reference or_by_notation *
       scope_name option list

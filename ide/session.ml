@@ -13,6 +13,16 @@ let prefs = Preferences.current
 (** A session is a script buffer + proof + messages,
     interacting with a coqtop, and a few other elements around *)
 
+class type ['a] page =
+  object
+    inherit GObj.widget
+    method update : 'a -> unit
+    method on_update : callback:('a -> unit) -> unit
+  end
+
+type errpage = (int * string) list page
+type jobpage = string Int.Map.t page
+
 type session = {
   buffer : GText.buffer;
   script : Wg_ScriptView.script_view;
@@ -24,6 +34,8 @@ type session = {
   command : Wg_Command.command_window;
   finder : Wg_Find.finder;
   tab_label : GMisc.label;
+  errpage : errpage;
+  jobpage : jobpage;
 }
 
 let create_buffer () =
@@ -211,6 +223,110 @@ let set_buffer_handlers
   let _ = buffer#connect#after#mark_deleted ~callback:mark_deleted_cb in
   ()
 
+let find_int_col s l =
+  match List.assoc s l with `IntC c -> c | _ -> assert false
+
+let find_string_col s l =
+  match List.assoc s l with `StringC c -> c | _ -> assert false
+
+let make_table_widget cd cb =
+  let frame = GBin.scrolled_window ~hpolicy:`NEVER ~vpolicy:`AUTOMATIC () in
+  let columns, store =
+    let cols = new GTree.column_list in
+    let columns = List.map (function
+      | (`Int,n,_)    -> n, `IntC (cols#add Gobject.Data.int)
+      | (`String,n,_) -> n, `StringC (cols#add Gobject.Data.string))
+    cd in
+    columns, GTree.list_store cols in
+  let data = GTree.view
+      ~vadjustment:frame#vadjustment ~hadjustment:frame#hadjustment
+      ~rules_hint:true ~headers_visible:false
+      ~model:store ~packing:frame#add () in
+  let () = data#set_headers_visible true in
+  let mk_rend c = GTree.cell_renderer_text [], ["text",c] in
+  let cols =
+    List.map2 (fun (_,c) (_,n,v) ->
+      let c = match c with
+        | `IntC c -> GTree.view_column ~renderer:(mk_rend c) ()
+        | `StringC c -> GTree.view_column ~renderer:(mk_rend c) () in
+      c#set_title n;
+      c#set_visible v;
+      c#set_sizing `AUTOSIZE;
+      c)
+    columns cd in
+  List.iter (fun c -> ignore(data#append_column c)) cols;
+  ignore(
+    data#connect#row_activated ~callback:(fun tp vc -> cb columns store tp vc)
+  );
+  frame, (fun f -> f columns store)
+
+let create_errpage (script : Wg_ScriptView.script_view) : errpage =
+  let table, access =
+    make_table_widget
+      [`Int,"Line",true; `String,"Error message",true]
+      (fun columns store tp vc ->
+        let row = store#get_iter tp in
+        let lno = store#get ~row ~column:(find_int_col "Line" columns) in
+        let where = script#buffer#get_iter (`LINE (lno-1)) in
+        script#buffer#place_cursor ~where;
+        ignore (script#scroll_to_iter
+		  ~use_align:false ~yalign:0.75 ~within_margin:0.25 where)) in
+  let tip = GMisc.label ~text:"Double click to jump to error line" () in
+  let box = GPack.vbox ~homogeneous:false () in
+  let () = box#pack ~expand:true table#coerce in
+  let () = box#pack ~expand:false ~padding:2 tip#coerce in
+  let last_update = ref [] in
+  let callback = ref (fun _ -> ()) in
+  object (self)
+    inherit GObj.widget box#as_widget
+    method update errs =
+      if !last_update = errs then ()
+      else begin
+	last_update := errs;
+	access (fun _ store -> store#clear ());
+        !callback errs;
+	List.iter (fun (lno, msg) -> access (fun columns store ->
+          let line = store#append () in
+          store#set line (find_int_col "Line" columns) lno;
+          store#set line (find_string_col "Error message" columns) msg))
+          errs
+      end
+    method on_update ~callback:cb = callback := cb
+  end
+
+let create_jobpage coqtop coqops : jobpage =
+  let table, access =
+    make_table_widget
+      [`Int,"Worker",true; `String,"Job name",true]
+      (fun columns store tp vc ->
+        let row = store#get_iter tp in
+        let w = store#get ~row ~column:(find_int_col "Worker" columns) in
+	let info () = Minilib.log ("Coq busy, discarding query") in
+	Coq.try_grab coqtop (coqops#stop_worker w) info
+      ) in
+  let tip = GMisc.label ~text:"Double click to interrupt worker" () in
+  let box = GPack.vbox ~homogeneous:false () in
+  let () = box#pack ~expand:true table#coerce in
+  let () = box#pack ~expand:false ~padding:2 tip#coerce in
+  let last_update = ref Int.Map.empty in
+  let callback = ref (fun _ -> ()) in
+  object (self)
+    inherit GObj.widget box#as_widget
+    method update jobs =
+      if !last_update = jobs then ()
+      else begin
+	last_update := jobs;
+	access (fun _ store -> store#clear ());
+        !callback jobs;
+	Int.Map.iter (fun id job -> access (fun columns store ->
+          let line = store#append () in
+          store#set line (find_int_col "Worker" columns) id;
+          store#set line (find_string_col "Job name" columns) job))
+          jobs
+      end
+    method on_update ~callback:cb = callback := cb
+  end
+
 let create_proof () =
   let proof = Wg_ProofView.proof_view () in
   let _ = proof#misc#set_can_focus true in
@@ -241,6 +357,8 @@ let create file coqtop_args =
   let _ = fops#update_stats in
   let cops =
     new CoqOps.coqops script proof messages coqtop (fun () -> fops#filename) in
+  let errpage = create_errpage script in
+  let jobpage = create_jobpage coqtop cops in
   let _ = set_buffer_handlers (buffer :> GText.buffer) script cops coqtop in
   let _ = Coq.set_reset_handler coqtop cops#handle_reset_initial in
   let _ = Coq.init_coqtop coqtop cops#initialize in
@@ -255,6 +373,8 @@ let create file coqtop_args =
     command=command;
     finder=finder;
     tab_label= GMisc.label ~text:basename ();
+    errpage=errpage;
+    jobpage=jobpage
   }
 
 let kill (sn:session) =
@@ -282,8 +402,31 @@ let build_layout (sn:session) =
     ~packing:state_paned#add1 () in
   let proof_scroll = GBin.scrolled_window
     ~vpolicy:`AUTOMATIC ~hpolicy:`AUTOMATIC ~packing:proof_frame#add () in
-  let message_frame = GBin.frame ~shadow_type:`IN
-    ~packing:state_paned#add2 () in
+  let message_frame = GPack.notebook ~packing:state_paned#add () in
+  let add_msg_page pos name text (w : GObj.widget) =
+    let detachable =
+      Wg_Detachable.detachable ~title:(text^" ("^name^")") () in
+    detachable#add w#coerce;
+    let label = GPack.hbox ~spacing:5 () in
+    let lbl = GMisc.label ~text ~packing:label#add () in
+    let but = GButton.button () in
+    but#add (GMisc.label ~markup:"<small>↗</small>" ())#coerce;
+    label#add but#coerce;
+    ignore(message_frame#insert_page ~pos
+      ~tab_label:label#coerce detachable#coerce);
+    ignore(but#connect#clicked ~callback:(fun _ ->
+      message_frame#remove_page (message_frame#page_num detachable#coerce);
+      detachable#button#clicked ()));
+    detachable#connect#detached ~callback:(fun _ ->
+      if message_frame#all_children = [] then message_frame#misc#hide ();
+      w#misc#set_size_request  ~width:500 ~height:400 ());
+    detachable#connect#attached ~callback:(fun _ ->
+      ignore(message_frame#insert_page ~pos
+        ~tab_label:label#coerce detachable#coerce);
+      message_frame#misc#show ();
+      detachable#show);
+    detachable#button#misc#hide ();
+    lbl in
   let session_tab = GPack.hbox ~homogeneous:false () in
   let img = GMisc.image ~icon_size:`SMALL_TOOLBAR
     ~packing:session_tab#pack () in
@@ -313,7 +456,14 @@ let build_layout (sn:session) =
   sn.command#pack_in (session_paned#pack2 ~shrink:false ~resize:false);
   script_scroll#add sn.script#coerce;
   proof_scroll#add sn.proof#coerce;
-  message_frame#add sn.messages#coerce;
+  ignore(add_msg_page 0 sn.tab_label#text "Messages" sn.messages#coerce);
+  let label = add_msg_page 1 sn.tab_label#text "Errors" sn.errpage#coerce in
+  ignore(add_msg_page 2 sn.tab_label#text "Jobs" sn.jobpage#coerce);
+  let txt = label#text in
+  let red s = "<span foreground=\"#FF0000\">" ^ s ^ "</span>" in
+  sn.errpage#on_update ~callback:(fun l ->
+    if l = [] then (label#set_use_markup false; label#set_text txt)
+    else (label#set_text (red txt);label#set_use_markup true));
   session_tab#pack sn.tab_label#coerce;
   img#set_stock `YES;
   eval_paned#set_position 1;

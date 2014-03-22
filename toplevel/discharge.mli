@@ -7,9 +7,9 @@
 (************************************************************************)
 
 open Context
-open Cooking
 open Declarations
 open Entries
+open Opaqueproof
 
 val process_inductive :
   named_context -> work_list -> mutual_inductive_body -> mutual_inductive_entry
