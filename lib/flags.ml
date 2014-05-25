@@ -42,7 +42,7 @@ let with_extra_values o l f x =
     raise reraise
 
 let boot = ref false
-
+let load_init = ref true
 let batch_mode = ref false
 
 type compilation_mode = BuildVo | BuildVi | Vi2Vo
@@ -59,6 +59,8 @@ let async_proofs_is_worker () =
   | _ -> false
 
 let debug = ref false
+
+let profile = false
 
 let print_emacs = ref false
 
@@ -133,6 +135,21 @@ let is_term_color () = !term_color
 let auto_intros = ref true
 let make_auto_intros flag = auto_intros := flag
 let is_auto_intros () = version_strictly_greater V8_2 && !auto_intros
+
+let universe_polymorphism = ref false
+let make_universe_polymorphism b = universe_polymorphism := b
+let is_universe_polymorphism () = !universe_polymorphism
+
+let local_polymorphic_flag = ref None
+let use_polymorphic_flag () = 
+  match !local_polymorphic_flag with 
+  | Some p -> local_polymorphic_flag := None; p
+  | None -> is_universe_polymorphism ()
+let make_polymorphic_flag b =
+  local_polymorphic_flag := Some b
+
+(** [program_mode] tells that Program mode has been activated, either
+    globally via [Set Program] or locally via the Program command prefix. *)
 
 let program_mode = ref false
 let is_program_mode () = !program_mode

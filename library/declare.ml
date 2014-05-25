@@ -44,36 +44,40 @@ let if_xml f x = if !Flags.xml_export then f x else ()
 
 type section_variable_entry =
   | SectionLocalDef of definition_entry
-  | SectionLocalAssum of types * bool (* Implicit status *)
+  | SectionLocalAssum of types Univ.in_universe_context_set * polymorphic * bool (** Implicit status *)
 
 type variable_declaration = DirPath.t * section_variable_entry * logical_kind
 
 let cache_variable ((sp,_),o) =
   match o with
-  | Inl cst -> Global.add_constraints cst
+  | Inl ctx -> Global.push_context_set ctx
   | Inr (id,(p,d,mk)) ->
   (* Constr raisonne sur les noms courts *)
   if variable_exists id then
     alreadydeclared (pr_id id ++ str " already exists");
-  let impl,opaq,cst = match d with (* Fails if not well-typed *)
-    | SectionLocalAssum (ty, impl) ->
-        let cst = Global.push_named_assum (id,ty) in
-	let impl = if impl then Implicit else Explicit in
-	impl, true, cst
-    | SectionLocalDef de ->
-        let cst = Global.push_named_def (id,de) in
-        Explicit, de.const_entry_opaque, cst in
+
+  let impl,opaq,poly,ctx = match d with (* Fails if not well-typed *)
+    | SectionLocalAssum ((ty,ctx),poly,impl) ->
+      let () = Global.push_named_assum ((id,ty),ctx) in
+      let impl = if impl then Implicit else Explicit in
+	impl, true, poly, ctx
+    | SectionLocalDef (de) ->
+      let () = Global.push_named_def (id,de) in
+        Explicit, de.const_entry_opaque, de.const_entry_polymorphic, 
+	(Univ.ContextSet.of_context de.const_entry_universes) in
   Nametab.push (Nametab.Until 1) (restrict_path 0 sp) (VarRef id);
-  add_section_variable id impl;
+  add_section_variable id impl poly ctx;
   Dischargedhypsmap.set_discharged_hyps sp [];
-  add_variable_data id (p,opaq,cst,mk)
+  add_variable_data id (p,opaq,ctx,poly,mk)
 
 let discharge_variable (_,o) = match o with
-  | Inr (id,_) -> Some (Inl (variable_constraints id))
+  | Inr (id,_) -> 
+    if variable_polymorphic id then None
+    else Some (Inl (variable_context id))
   | Inl _ -> Some o
 
 type variable_obj =
-    (Univ.constraints, Id.t * variable_declaration) union
+    (Univ.ContextSet.t, Id.t * variable_declaration) union
 
 let inVariable : variable_obj -> obj =
   declare_object { (default_object "VARIABLE") with
@@ -122,7 +126,7 @@ let open_constant i ((sp,kn), obj) =
     | (Def _ | Undef _) -> ()
     | OpaqueDef lc ->
         match Opaqueproof.get_constraints lc with
-        | Some f when Future.is_val f -> Global.add_constraints (Future.force f)
+        | Some f when Future.is_val f -> Global.push_context_set (Future.force f)
         | _ -> ()
 
 let exists_name id =
@@ -139,7 +143,8 @@ let cache_constant ((sp,kn), obj) =
   let kn' = Global.add_constant dir id obj.cst_decl in
   assert (eq_constant kn' (constant_of_kn kn));
   Nametab.push (Nametab.Until 1) sp (ConstRef (constant_of_kn kn));
-  add_section_constant kn' (Global.lookup_constant kn').const_hyps;
+  let cst = Global.lookup_constant kn' in
+  add_section_constant (cst.const_proj <> None) kn' cst.const_hyps;
   Dischargedhypsmap.set_discharged_hyps sp obj.cst_hyps;
   add_constant_kind (constant_of_kn kn) obj.cst_kind
 
@@ -150,16 +155,18 @@ let discharged_hyps kn sechyps =
 
 let discharge_constant ((sp, kn), obj) =
   let con = constant_of_kn kn in
+
   let from = Global.lookup_constant con in
   let modlist = replacement_context () in
-  let hyps = section_segment_of_constant con in
+  let hyps,uctx = section_segment_of_constant con in
   let new_hyps = (discharged_hyps kn hyps) @ obj.cst_hyps in
-  let abstract = named_of_variable_context hyps in
+  let abstract = (named_of_variable_context hyps, uctx) in
   let new_decl = GlobalRecipe{ from; info = { Opaqueproof.modlist; abstract}} in
   Some { obj with cst_hyps = new_hyps; cst_decl = new_decl; }
 
 (* Hack to reduce the size of .vo: we keep only what load/open needs *)
-let dummy_constant_entry = ConstantEntry (ParameterEntry (None,mkProp,None))
+let dummy_constant_entry = 
+  ConstantEntry (ParameterEntry (None,false,(mkProp,Univ.UContext.empty),None))
 
 let dummy_constant cst = {
   cst_decl = dummy_constant_entry;
@@ -187,9 +194,21 @@ let declare_constant_common id cst =
   Notation.declare_ref_arguments_scope (ConstRef c);
   c
 
+let definition_entry ?(opaque=false) ?(inline=false) ?types 
+    ?(poly=false) ?(univs=Univ.UContext.empty) ?(eff=Declareops.no_seff) body =
+  { const_entry_body = Future.from_val ((body,Univ.ContextSet.empty), eff);
+    const_entry_secctx = None;
+    const_entry_type = types;
+    const_entry_proj = None;
+    const_entry_polymorphic = poly;
+    const_entry_universes = univs;
+    const_entry_opaque = opaque;
+    const_entry_feedback = None;
+    const_entry_inline_code = inline}
+
 let declare_scheme = ref (fun _ _ -> assert false)
 let set_declare_scheme f = declare_scheme := f
-let declare_sideff se =
+let declare_sideff fix_exn se =
   let cbl, scheme = match se with
     | SEsubproof (c, cb) -> [c, cb], None
     | SEscheme (cbl, k) ->
@@ -197,24 +216,28 @@ let declare_sideff se =
   let id_of c = Names.Label.to_id (Names.Constant.label c) in
   let pt_opaque_of cb =
     match cb with
-    | { const_body = Def sc } -> Mod_subst.force_constr sc, false
-    | { const_body = OpaqueDef fc } -> Opaqueproof.force_proof fc, true
+    | { const_body = Def sc } -> (Mod_subst.force_constr sc, Univ.ContextSet.empty), false
+    | { const_body = OpaqueDef fc } -> 
+      (Opaqueproof.force_proof fc, Opaqueproof.force_constraints fc), true
     | { const_body = Undef _ } -> anomaly(str"Undefined side effect")
   in
   let ty_of cb =
     match cb.Declarations.const_type with
-    | Declarations.NonPolymorphicType t -> Some t
-    | _ -> None in
+    | Declarations.RegularArity t -> Some t 
+    | Declarations.TemplateArity _ -> None in
   let cst_of cb =
     let pt, opaque = pt_opaque_of cb in
     let ty = ty_of cb in
     { cst_decl = ConstantEntry (DefinitionEntry {
-        const_entry_body = Future.from_here (pt, Declareops.no_seff);
+        const_entry_body = Future.from_here ~fix_exn (pt, Declareops.no_seff);
         const_entry_secctx = Some cb.Declarations.const_hyps;
         const_entry_type = ty;
         const_entry_opaque = opaque;
         const_entry_inline_code = false;
         const_entry_feedback = None;
+	const_entry_polymorphic = cb.const_polymorphic;
+	const_entry_universes = cb.const_universes;
+	const_entry_proj = None;
     });
     cst_hyps = [] ;
     cst_kind =  Decl_kinds.IsDefinition Decl_kinds.Definition;
@@ -232,13 +255,19 @@ let declare_constant ?(internal = UserVerbose) ?(local = false) id (cd, kind) =
   let cd = (* We deal with side effects of non-opaque constants *)
     match cd with
     | Entries.DefinitionEntry ({
-      const_entry_opaque = false; const_entry_body = bo } as de) ->
-        let pt, seff = Future.force bo in
+      const_entry_opaque = false; const_entry_body = bo } as de)
+    | Entries.DefinitionEntry ({
+      const_entry_polymorphic = true; const_entry_body = bo } as de)
+      ->
+        let _, seff = Future.force bo in
         if Declareops.side_effects_is_empty seff then cd
         else begin
-          Declareops.iter_side_effects declare_sideff seff;
+          let seff = Declareops.uniquize_side_effects seff in
+          Declareops.iter_side_effects
+            (declare_sideff (Future.fix_exn_of bo)) seff;
           Entries.DefinitionEntry { de with
-            const_entry_body = Future.from_val (pt, Declareops.no_seff) }
+            const_entry_body = Future.chain ~pure:true bo (fun (pt, _) ->
+              pt, Declareops.no_seff) }
         end
     | _ -> cd
   in
@@ -252,16 +281,11 @@ let declare_constant ?(internal = UserVerbose) ?(local = false) id (cd, kind) =
   let () = if_xml (Hook.get f_xml_declare_constant) (internal, kn) in
   kn
 
-let declare_definition ?(internal=UserVerbose)
+let declare_definition ?(internal=UserVerbose) 
   ?(opaque=false) ?(kind=Decl_kinds.Definition) ?(local = false)
-  id ?types body =
+  ?(poly=false) id ?types (body,ctx) =
   let cb = 
-    { Entries.const_entry_body = body;
-      const_entry_type = types;
-      const_entry_opaque = opaque;
-      const_entry_inline_code = false;
-      const_entry_secctx = None;
-      const_entry_feedback = None }
+    definition_entry ?types ~poly ~univs:(Univ.ContextSet.to_context ctx) ~opaque body
   in
     declare_constant ~internal ~local id
       (Entries.DefinitionEntry cb, Decl_kinds.IsDefinition kind)
@@ -311,7 +335,8 @@ let cache_inductive ((sp,kn),(dhyps,mie)) =
   let _,dir,_ = repr_kn kn in
   let kn' = Global.add_mind dir id mie in
   assert (eq_mind kn' (mind_of_kn kn));
-  add_section_kn kn' (Global.lookup_mind kn').mind_hyps;
+  let mind = Global.lookup_mind kn' in
+  add_section_kn kn' mind.mind_hyps;
   Dischargedhypsmap.set_discharged_hyps sp dhyps;
   List.iter (fun (sp, ref) -> Nametab.push (Nametab.Until 1) sp ref) names
 
@@ -319,9 +344,9 @@ let discharge_inductive ((sp,kn),(dhyps,mie)) =
   let mind = Global.mind_of_delta_kn kn in
   let mie = Global.lookup_mind mind in
   let repl = replacement_context () in
-  let sechyps = section_segment_of_mutual_inductive mind in
+  let sechyps,uctx = section_segment_of_mutual_inductive mind in
   Some (discharged_hyps kn sechyps,
-        Discharge.process_inductive (named_of_variable_context sechyps) repl mie)
+        Discharge.process_inductive (named_of_variable_context sechyps,uctx) repl mie)
 
 let dummy_one_inductive_entry mie = {
   mind_entry_typename = mie.mind_entry_typename;
@@ -335,7 +360,10 @@ let dummy_inductive_entry (_,m) = ([],{
   mind_entry_params = [];
   mind_entry_record = false;
   mind_entry_finite = true;
-  mind_entry_inds = List.map dummy_one_inductive_entry m.mind_entry_inds })
+  mind_entry_inds = List.map dummy_one_inductive_entry m.mind_entry_inds;
+  mind_entry_polymorphic = false;
+  mind_entry_universes = Univ.UContext.empty;
+  mind_entry_private = None })
 
 type inductive_obj = Dischargedhypsmap.discharged_hyps * mutual_inductive_entry
 

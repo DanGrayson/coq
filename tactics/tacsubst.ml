@@ -74,7 +74,7 @@ open Printer
 let subst_global_reference subst =
  let subst_global ref =
   let ref',t' = subst_global subst ref in
-   if not (eq_constr (constr_of_global ref') t') then
+   if not (eq_constr (Universes.constr_of_global ref') t') then
     msg_warning (strbrk "The reference " ++ pr_global ref ++ str " is not " ++
           str " expanded to \"" ++ pr_lconstr t' ++ str "\", but to " ++
           pr_global ref') ;
@@ -134,25 +134,19 @@ let rec subst_match_goal_hyps subst = function
 let rec subst_atomic subst (t:glob_atomic_tactic_expr) = match t with
   (* Basic tactics *)
   | TacIntroPattern _ | TacIntrosUntil _ | TacIntroMove _ as x -> x
-  | TacAssumption as x -> x
   | TacExact c -> TacExact (subst_glob_constr subst c)
-  | TacExactNoCheck c -> TacExactNoCheck (subst_glob_constr subst c)
-  | TacVmCastNoCheck c -> TacVmCastNoCheck (subst_glob_constr subst c)
   | TacApply (a,ev,cb,cl) ->
       TacApply (a,ev,List.map (subst_glob_with_bindings subst) cb,cl)
   | TacElim (ev,cb,cbo) ->
       TacElim (ev,subst_glob_with_bindings subst cb,
                Option.map (subst_glob_with_bindings subst) cbo)
-  | TacElimType c -> TacElimType (subst_glob_constr subst c)
   | TacCase (ev,cb) -> TacCase (ev,subst_glob_with_bindings subst cb)
-  | TacCaseType c -> TacCaseType (subst_glob_constr subst c)
   | TacFix (idopt,n) as x -> x
   | TacMutualFix (id,n,l) ->
       TacMutualFix(id,n,List.map (fun (id,n,c) -> (id,n,subst_glob_constr subst c)) l)
   | TacCofix idopt as x -> x
   | TacMutualCofix (id,l) ->
       TacMutualCofix (id, List.map (fun (id,c) -> (id,subst_glob_constr subst c)) l)
-  | TacCut c -> TacCut (subst_glob_constr subst c)
   | TacAssert (b,na,c) ->
       TacAssert (Option.map (subst_tactic subst) b,na,subst_glob_constr subst c)
   | TacGeneralize cl ->
@@ -172,13 +166,9 @@ let rec subst_atomic subst (t:glob_atomic_tactic_expr) = match t with
       let el' = Option.map (subst_glob_with_bindings subst) el in
       TacInductionDestruct (isrec,ev,(l',el',cls))
   | TacDoubleInduction (h1,h2) as x -> x
-  | TacDecomposeAnd c -> TacDecomposeAnd (subst_glob_constr subst c)
-  | TacDecomposeOr c -> TacDecomposeOr (subst_glob_constr subst c)
   | TacDecompose (l,c) ->
-      let l = List.map (subst_or_var (subst_inductive subst)) l in
+      let l = List.map (subst_or_var (subst_ind subst)) l in
       TacDecompose (l,subst_glob_constr subst c)
-  | TacSpecialize (n,l) -> TacSpecialize (n,subst_glob_with_bindings subst l)
-  | TacLApply c -> TacLApply (subst_glob_constr subst c)
 
   (* Context management *)
   | TacClear _ as x -> x
@@ -188,8 +178,6 @@ let rec subst_atomic subst (t:glob_atomic_tactic_expr) = match t with
   | TacRevert _ as x -> x
 
   (* Constructors *)
-  | TacLeft (ev,bl) -> TacLeft (ev,subst_bindings subst bl)
-  | TacRight (ev,bl) -> TacRight (ev,subst_bindings subst bl)
   | TacSplit (ev,b,bll) -> TacSplit (ev,b,List.map (subst_bindings subst) bll)
   | TacAnyConstructor (ev,t) -> TacAnyConstructor (ev,Option.map (subst_tactic subst) t)
   | TacConstructor (ev,n,bl) -> TacConstructor (ev,n,subst_bindings subst bl)
@@ -201,8 +189,7 @@ let rec subst_atomic subst (t:glob_atomic_tactic_expr) = match t with
         subst_glob_constr subst c, cl)
 
   (* Equivalence relations *)
-  | TacReflexivity | TacSymmetry _ as x -> x
-  | TacTransitivity c -> TacTransitivity (Option.map (subst_glob_constr subst) c)
+  | TacSymmetry _ as x -> x
 
   (* Equality and inversion *)
   | TacRewrite (ev,l,cl,by) ->
@@ -330,6 +317,7 @@ let () =
   Genintern.register_subst0 wit_ref subst_global_reference;
   Genintern.register_subst0 wit_intro_pattern (fun _ v -> v);
   Genintern.register_subst0 wit_tactic subst_tactic;
-  Genintern.register_subst0 wit_sort (fun _ v -> v)
+  Genintern.register_subst0 wit_sort (fun _ v -> v);
+  Genintern.register_subst0 wit_clause_dft_concl (fun _ v -> v)
 
 let _ = Hook.set Auto.extern_subst_tactic subst_tactic

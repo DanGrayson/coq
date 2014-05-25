@@ -106,7 +106,7 @@ let intern_hyp ist (loc,id as locid) =
   else
     Pretype_errors.error_var_not_found_loc loc id
 
-let intern_hyp_or_metaid ist id = intern_hyp ist (skip_metaid id)
+let intern_hyp_or_metaid ist id = intern_hyp ist id
 
 let intern_or_var ist = function
   | ArgVar locid -> ArgVar (intern_hyp ist locid)
@@ -138,12 +138,13 @@ let intern_ltac_variable ist = function
 
 let intern_constr_reference strict ist = function
   | Ident (_,id) as r when not strict && find_hyp id ist ->
-      GVar (dloc,id), Some (CRef r)
+      GVar (dloc,id), Some (CRef (r,None))
   | Ident (_,id) as r when find_ctxvar id ist ->
-      GVar (dloc,id), if strict then None else Some (CRef r)
+      GVar (dloc,id), if strict then None else Some (CRef (r,None))
   | r ->
       let loc,_ as lqid = qualid_of_reference r in
-      GRef (loc,locate_global_with_alias lqid), if strict then None else Some (CRef r)
+      GRef (loc,locate_global_with_alias lqid,None), 
+	if strict then None else Some (CRef (r,None))
 
 let intern_move_location ist = function
   | MoveAfter id -> MoveAfter (intern_hyp_or_metaid ist id)
@@ -278,7 +279,7 @@ let intern_induction_arg ist = function
   | ElimOnIdent (loc,id) ->
       if !strict_check then
 	(* If in a defined tactic, no intros-until *)
-	match intern_constr ist (CRef (Ident (dloc,id))) with
+	match intern_constr ist (CRef (Ident (dloc,id), None)) with
 	| GVar (loc,id),_ -> ElimOnIdent (loc,id)
 	| c -> ElimOnConstr (c,NoBindings)
       else
@@ -454,19 +455,14 @@ let rec intern_atomic lf ist x =
   | TacIntroMove (ido,hto) ->
       TacIntroMove (Option.map (intern_ident lf ist) ido,
                     intern_move_location ist hto)
-  | TacAssumption -> TacAssumption
   | TacExact c -> TacExact (intern_constr ist c)
-  | TacExactNoCheck c -> TacExactNoCheck (intern_constr ist c)
-  | TacVmCastNoCheck c -> TacVmCastNoCheck (intern_constr ist c)
   | TacApply (a,ev,cb,inhyp) ->
       TacApply (a,ev,List.map (intern_constr_with_bindings ist) cb,
                 Option.map (intern_in_hyp_as ist lf) inhyp)
   | TacElim (ev,cb,cbo) ->
       TacElim (ev,intern_constr_with_bindings ist cb,
                Option.map (intern_constr_with_bindings ist) cbo)
-  | TacElimType c -> TacElimType (intern_type ist c)
   | TacCase (ev,cb) -> TacCase (ev,intern_constr_with_bindings ist cb)
-  | TacCaseType c -> TacCaseType (intern_type ist c)
   | TacFix (idopt,n) -> TacFix (Option.map (intern_ident lf ist) idopt,n)
   | TacMutualFix (id,n,l) ->
       let f (id,n,c) = (intern_ident lf ist id,n,intern_type ist c) in
@@ -475,7 +471,6 @@ let rec intern_atomic lf ist x =
   | TacMutualCofix (id,l) ->
       let f (id,c) = (intern_ident lf ist id,intern_type ist c) in
       TacMutualCofix (intern_ident lf ist id, List.map f l)
-  | TacCut c -> TacCut (intern_type ist c)
   | TacAssert (otac,ipat,c) ->
       TacAssert (Option.map (intern_pure_tactic ist) otac,
                  Option.map (intern_intro_pattern lf ist) ipat,
@@ -511,13 +506,8 @@ let rec intern_atomic lf ist x =
       let h1 = intern_quantified_hypothesis ist h1 in
       let h2 = intern_quantified_hypothesis ist h2 in
       TacDoubleInduction (h1,h2)
-  | TacDecomposeAnd c -> TacDecomposeAnd (intern_constr ist c)
-  | TacDecomposeOr c -> TacDecomposeOr (intern_constr ist c)
   | TacDecompose (l,c) -> let l = List.map (intern_inductive ist) l in
       TacDecompose (l,intern_constr ist c)
-  | TacSpecialize (n,l) -> TacSpecialize (n,intern_constr_with_bindings ist l)
-  | TacLApply c -> TacLApply (intern_constr ist c)
-
   (* Context management *)
   | TacClear (b,l) -> TacClear (b,List.map (intern_hyp_or_metaid ist) l)
   | TacClearBody l -> TacClearBody (List.map (intern_hyp_or_metaid ist) l)
@@ -530,8 +520,6 @@ let rec intern_atomic lf ist x =
   | TacRevert l -> TacRevert (List.map (intern_hyp_or_metaid ist) l)
 
   (* Constructors *)
-  | TacLeft (ev,bl) -> TacLeft (ev,intern_bindings ist bl)
-  | TacRight (ev,bl) -> TacRight (ev,intern_bindings ist bl)
   | TacSplit (ev,b,bll) -> TacSplit (ev,b,List.map (intern_bindings ist) bll)
   | TacAnyConstructor (ev,t) -> TacAnyConstructor (ev,Option.map (intern_pure_tactic ist) t)
   | TacConstructor (ev,n,bl) -> TacConstructor (ev,intern_or_var ist n,intern_bindings ist bl)
@@ -558,10 +546,8 @@ let rec intern_atomic lf ist x =
 	clause_app (intern_hyp_location ist) cl)
 
   (* Equivalence relations *)
-  | TacReflexivity -> TacReflexivity
   | TacSymmetry idopt ->
       TacSymmetry (clause_app (intern_hyp_location ist) idopt)
-  | TacTransitivity c -> TacTransitivity (Option.map (intern_constr ist) c)
 
   (* Equality and inversion *)
   | TacRewrite (ev,l,cl,by) ->
@@ -791,6 +777,13 @@ let () =
     (ist, ans)
   in
   Genintern.register_intern0 wit_intro_pattern intern_intro_pattern
+
+let () =
+  let intern_clause ist cl =
+    let ans = clause_app (intern_hyp_location ist) cl in
+    (ist, ans)
+  in
+  Genintern.register_intern0 wit_clause_dft_concl intern_clause
 
 let () =
   Genintern.register_intern0 wit_ref (lift intern_global_reference);

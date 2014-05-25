@@ -1,3 +1,11 @@
+(************************************************************************)
+(*  v      *   The Coq Proof Assistant  /  The Coq Development Team     *)
+(* <O___,, *   INRIA - CNRS - LIX - LRI - PPS - Copyright 1999-2012     *)
+(*   \VV/  **************************************************************)
+(*    //   *      This file is distributed under the terms of the       *)
+(*         *       GNU Lesser General Public License Version 2.1        *)
+(************************************************************************)
+
 Require Import Rbase.
 Require Import Ranalysis_reg.
 Require Import Rfunctions.
@@ -6,6 +14,7 @@ Require Import Fourier.
 Require Import RiemannInt.
 Require Import SeqProp.
 Require Import Max.
+Require Import Omega.
 Local Open Scope R_scope.
 
 (** * Preliminaries lemmas *)
@@ -687,7 +696,7 @@ intros f g lb ub x Prf g_cont_pur lb_lt_ub x_encad Prg_incr f_eq_g df_neq.
        exists deltatemp ; exact Htemp.
     elim (Hf_deriv eps eps_pos).
     intros deltatemp Htemp.
-     red in Hlinv ; red in Hlinv ; simpl dist in Hlinv ; unfold R_dist in Hlinv.
+     red in Hlinv ; red in Hlinv ; unfold dist in Hlinv ; unfold R_dist in Hlinv.
      assert (Hlinv' := Hlinv (fun h => (f (y+h) - f y)/h) (fun h => h <>0) l 0).
      unfold limit1_in, limit_in, dist in Hlinv' ; simpl in Hlinv'. unfold R_dist in Hlinv'.
      assert (Premisse : (forall eps : R,

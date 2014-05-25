@@ -12,6 +12,11 @@ open Mod_subst
 (** Operations concerning types in [Declarations] :
     [constant_body], [mutual_inductive_body], [module_body] ... *)
 
+(** {6 Arities} *)
+
+val map_decl_arity : ('a -> 'c) -> ('b -> 'd) ->
+  ('a, 'b) declaration_arity -> ('c, 'd) declaration_arity
+
 (** {6 Constants} *)
 
 val subst_const_body : substitution -> constant_body -> constant_body
@@ -25,6 +30,12 @@ val constant_has_body : constant_body -> bool
 
 val body_of_constant : constant_body -> Term.constr option
 val constraints_of_constant : constant_body -> Univ.constraints
+val universes_of_constant : constant_body -> Univ.universe_context
+
+(** Return the universe context, in case the definition is polymorphic, otherwise
+    the context is empty. *)
+
+val universes_of_polymorphic_constant : constant_body -> Univ.universe_context
 
 val is_opaque : constant_body -> bool
 
@@ -57,7 +68,7 @@ val recarg_length : wf_paths -> int -> int
 
 val subst_wf_paths : substitution -> wf_paths -> wf_paths
 
-val subst_mind : substitution -> mutual_inductive_body -> mutual_inductive_body
+val subst_mind_body : substitution -> mutual_inductive_body -> mutual_inductive_body
 
 val join_constant_body : constant_body -> unit
 

@@ -39,7 +39,7 @@ type library_t = {
   library_deps : (compilation_unit_name * Safe_typing.vodigest) array;
   library_imports : compilation_unit_name array;
   library_digests : Safe_typing.vodigest;
-  library_extra_univs : Univ.constraints;
+  library_extra_univs : Univ.universe_context_set;
 }
 
 module LibraryOrdered = DirPath
@@ -107,7 +107,7 @@ let register_loaded_library m =
     let f = prefix ^ "cmo" in
     let f = Dynlink.adapt_filename f in
     if not !Flags.no_native_compiler then
-      Nativelib.call_linker ~fatal:false prefix (Filename.concat dirname f) None
+      Nativelib.link_library ~prefix ~dirname ~basename:f
   in
   let rec aux = function
     | [] -> link m; [m]
@@ -329,7 +329,7 @@ type 'a table_status =
 let opaque_tables =
   ref (LibraryMap.empty : (Term.constr table_status) LibraryMap.t)
 let univ_tables =
-  ref (LibraryMap.empty : (Univ.constraints table_status) LibraryMap.t)
+  ref (LibraryMap.empty : (Univ.universe_context_set table_status) LibraryMap.t)
 
 let add_opaque_table dp st =
   opaque_tables := LibraryMap.add dp st !opaque_tables
@@ -354,7 +354,7 @@ let access_opaque_table dp i =
     add_opaque_table !opaque_tables dp i
 let access_univ_table dp i =
   access_table
-    (fetch_table "universe constraints of opaque proofs")
+    (fetch_table "universe contexts of opaque proofs")
     add_univ_table !univ_tables dp i
 
 (** Table of opaque terms from the library currently being compiled *)
@@ -362,7 +362,7 @@ let access_univ_table dp i =
 module OpaqueTables = struct
 
  let a_constr = Future.from_val (Term.mkRel 1)
- let a_univ = Future.from_val Univ.empty_constraint
+ let a_univ = Future.from_val Univ.ContextSet.empty
  let a_discharge : Opaqueproof.cooking_info list = []
 
  let local_opaque_table = ref (Array.make 100 a_constr)
@@ -440,7 +440,7 @@ let () =
 
 type seg_lib = library_disk
 type seg_univ = (* true = vivo, false = vi *)
-  Univ.constraints Future.computation array * Univ.constraints * bool
+  Univ.universe_context_set Future.computation array * Univ.universe_context_set * bool
 type seg_discharge = Opaqueproof.cooking_info list array
 type seg_proofs = Term.constr Future.computation array
 
@@ -466,20 +466,22 @@ let intern_from_file f =
   add_opaque_table lmd.md_name (ToFetch (f,pos,digest));
   let open Safe_typing in
   match univs with
-  | None -> mk_library lmd (Dvo_or_vi digest_lmd) Univ.empty_constraint
+  | None -> mk_library lmd (Dvo_or_vi digest_lmd) Univ.ContextSet.empty
   | Some (utab,uall,true) ->
       add_univ_table lmd.md_name (Fetched utab);
       mk_library lmd (Dvivo (digest_lmd,digest_u)) uall
   | Some (utab,_,false) ->
       add_univ_table lmd.md_name (Fetched utab);
-      mk_library lmd (Dvo_or_vi digest_lmd) Univ.empty_constraint
+      mk_library lmd (Dvo_or_vi digest_lmd) Univ.ContextSet.empty
 
-let rec intern_library needed (dir, f) =
+module DPMap = Map.Make(DirPath)
+
+let rec intern_library (needed, contents) (dir, f) =
   (* Look if in the current logical environment *)
-  try find_library dir, needed
+  try find_library dir, (needed, contents)
   with Not_found ->
   (* Look if already listed and consequently its dependencies too *)
-  try List.assoc_f DirPath.equal dir needed, needed
+  try DPMap.find dir contents, (needed, contents)
   with Not_found ->
   (* [dir] is an absolute name which matches [f] which must be in loadpath *)
   let m = intern_from_file f in
@@ -488,21 +490,23 @@ let rec intern_library needed (dir, f) =
       (str ("The file " ^ f ^ " contains library") ++ spc () ++
        pr_dirpath m.library_name ++ spc () ++ str "and not library" ++
        spc() ++ pr_dirpath dir);
-  m, intern_library_deps needed dir m
+  m, intern_library_deps (needed, contents) dir m
 
-and intern_library_deps needed dir m =
-  (dir,m)::Array.fold_left (intern_mandatory_library dir) needed m.library_deps
+and intern_library_deps libs dir m =
+  let needed, contents = Array.fold_left (intern_mandatory_library dir) libs m.library_deps in
+  (dir :: needed, DPMap.add dir m contents )
 
-and intern_mandatory_library caller needed (dir,d) =
-  let m,needed = intern_library needed (try_locate_absolute_library dir) in
+and intern_mandatory_library caller libs (dir,d) =
+  let m, libs = intern_library libs (try_locate_absolute_library dir) in
   if not (Safe_typing.digest_match ~actual:m.library_digests ~required:d) then
     errorlabstrm "" (strbrk ("Compiled library "^ DirPath.to_string caller ^
       ".vo makes inconsistent assumptions over library " ^
       DirPath.to_string dir));
-  needed
+  libs
 
-let rec_intern_library needed mref =
-  let _,needed = intern_library needed mref in needed
+let rec_intern_library libs mref =
+  let _, libs = intern_library libs mref in
+  libs
 
 let check_library_short_name f dir = function
   | Some id when not (Id.equal id (snd (split_dirpath dir))) ->
@@ -527,7 +531,8 @@ let rec_intern_by_filename_only id f =
       m.library_name, []
     end
  else
-    let needed = intern_library_deps [] m.library_name m in
+    let needed, contents = intern_library_deps ([], DPMap.empty) m.library_name m in
+    let needed = List.map (fun dir -> dir, DPMap.find dir contents) needed in
     m.library_name, needed
 
 let rec_intern_library_from_file idopt f =
@@ -599,8 +604,8 @@ let in_require : require_obj -> obj =
 let (f_xml_require, xml_require) = Hook.make ~default:ignore ()
 
 let require_library_from_dirpath modrefl export =
-  let needed = List.fold_left rec_intern_library [] modrefl in
-  let needed = List.rev_map snd needed in
+  let needed, contents = List.fold_left rec_intern_library ([], DPMap.empty) modrefl in
+  let needed = List.rev_map (fun dir -> DPMap.find dir contents) needed in
   let modrefl = List.map fst modrefl in
     if Lib.is_module_or_modtype () then
       begin
@@ -731,7 +736,7 @@ let save_library_to ?todo dir f =
     | Some d ->
         assert(!Flags.compilation_mode = Flags.BuildVi);
         f ^ "i", (fun x -> Some (d x)),
-          (fun x -> Some (x,Univ.empty_constraint,false)), (fun x -> Some x) in
+          (fun x -> Some (x,Univ.ContextSet.empty,false)), (fun x -> Some x) in
   Opaqueproof.reset_indirect_creator ();
   let cenv, seg, ast = Declaremods.end_library dir in
   let opaque_table, univ_table, disch_table, f2t_map =
@@ -758,9 +763,8 @@ let save_library_to ?todo dir f =
     close_out ch;
     (* Writing native code files *)
     if not !Flags.no_native_compiler then
-      let lp = Loadpath.get_accessible_paths () in
       let fn = Filename.dirname f'^"/"^Nativecode.mod_uid_of_dirpath dir in
-      if not (Int.equal (Nativelibrary.compile_library dir ast lp fn) 0) then
+      if not (Int.equal (Nativelib.compile_library dir ast fn) 0) then
         msg_error (str"Could not compile the library to native code. Skipping.")
    with reraise ->
     let reraise = Errors.push reraise in
@@ -789,7 +793,13 @@ let mem s =
 		 (CObj.size_kb m) (CObj.size_kb m.library_compiled)
 		 (CObj.size_kb m.library_objects)))
 
-let get_load_paths_str () =
-  List.map CUnix.string_of_physical_path (Loadpath.get_accessible_paths ())
+module StringOrd = struct type t = string let compare = String.compare end
+module StringSet = Set.Make(StringOrd)
 
-let _ = Nativelib.get_load_paths := get_load_paths_str
+let get_used_load_paths () =
+  StringSet.elements
+    (List.fold_left (fun acc m -> StringSet.add
+      (Filename.dirname (library_full_filename m.library_name)) acc)
+       StringSet.empty !libraries_loaded_list)
+
+let _ = Nativelib.get_load_paths := get_used_load_paths

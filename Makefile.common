@@ -59,21 +59,16 @@ COQBINARIES:= $(COQMKTOP) \
 
 CSDPCERT:=plugins/micromega/csdpcert$(EXE)
 
-# Minimal set of source directories for building grammar.cma
-# Invariant: the .ml4 there shouldn't use grammar.cma
-# (the grammar-dependent .ml4 are in tactics, toplevel, plugins)
-GRAMSRCDIRS:=\
-  config     lib     intf    kernel   kernel/byterun  library \
-  pretyping  interp  proofs  parsing  grammar
-
-CORESRCDIRS:= $(GRAMSRCDIRS)  printing  tactics  toplevel
+CORESRCDIRS:=\
+  config 	lib		kernel		kernel/byterun	library \
+  proofs 	tactics 	pretyping	interp		stm \
+  toplevel	parsing	printing	grammar	        intf
 
 PLUGINS:=\
   omega		romega 		micromega 	quote \
   setoid_ring 	xml 		extraction 	fourier \
   cc 		funind 		firstorder 	Derive \
-  rtauto 	nsatz           syntax          decl_mode \
-  btauto
+  rtauto 	nsatz           syntax          decl_mode	btauto
 
 SRCDIRS:=\
   $(CORESRCDIRS)  \
@@ -162,7 +157,7 @@ BYTERUN:=$(addprefix kernel/byterun/, \
 CORECMA:=lib/clib.cma lib/lib.cma kernel/kernel.cma library/library.cma \
         pretyping/pretyping.cma interp/interp.cma proofs/proofs.cma \
         parsing/parsing.cma printing/printing.cma tactics/tactics.cma \
-	toplevel/toplevel.cma parsing/highparsing.cma tactics/hightactics.cma
+	stm/stm.cma toplevel/toplevel.cma parsing/highparsing.cma tactics/hightactics.cma
 
 GRAMMARCMA:=tools/compat5.cmo grammar/grammar.cma
 
@@ -329,9 +324,9 @@ vo_to_mod = $(subst /,.,$(patsubst theories/%,Coq.%,$(patsubst plugins/%,Coq.%,$
 
 # Converting a stdlib filename into native compiler filenames
 # Used for install targets
-vo_to_cm = $(foreach vo,$(1),$(dir $(vo))$(subst /,_,$(patsubst theories/%,NCoq_%,$(patsubst plugins/%,NCoq_%,$(vo:.vo=.cm*)))))
+vo_to_cm = $(foreach vo,$(1),$(dir $(vo)).coq-native/$(subst /,_,$(patsubst theories/%,NCoq_%,$(patsubst plugins/%,NCoq_%,$(vo:.vo=.cm*)))))
 
-vo_to_obj = $(foreach vo,$(1),$(dir $(vo))$(subst /,_,$(patsubst theories/%,NCoq_%,$(patsubst plugins/%,NCoq_%,$(vo:.vo=.o)))))
+vo_to_obj = $(foreach vo,$(1),$(dir $(vo)).coq-native/$(subst /,_,$(patsubst theories/%,NCoq_%,$(patsubst plugins/%,NCoq_%,$(vo:.vo=.o)))))
 
 ALLMODS:=$(call vo_to_mod,$(ALLVO))
 
@@ -359,7 +354,7 @@ OCAMLDOCDIR=dev/ocamldoc
 DOCMLIS=$(wildcard ./lib/*.mli ./intf/*.mli ./kernel/*.mli ./library/*.mli \
 	./pretyping/*.mli ./interp/*.mli printing/*.mli \
 	./parsing/*.mli ./proofs/*.mli \
-	./tactics/*.mli ./toplevel/*.mli)
+	./tactics/*.mli ./stm/*.mli ./toplevel/*.mli)
 
 # Defining options to generate dependencies graphs
 DOT=dot

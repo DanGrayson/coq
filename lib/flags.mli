@@ -9,6 +9,7 @@
 (** Global options of the system. *)
 
 val boot : bool ref
+val load_init : bool ref
 
 val batch_mode : bool ref
 type compilation_mode = BuildVo | BuildVi | Vi2Vo
@@ -22,6 +23,8 @@ val async_proofs_worker_flags : string option ref
 val async_proofs_is_worker : unit -> bool
 
 val debug : bool ref
+
+val profile : bool
 
 val print_emacs : bool ref
 
@@ -70,6 +73,14 @@ val is_term_color : unit -> bool
 
 val program_mode : bool ref
 val is_program_mode : unit -> bool
+
+(** Global universe polymorphism flag. *)
+val make_universe_polymorphism : bool -> unit
+val is_universe_polymorphism : unit -> bool
+
+(** Local universe polymorphism flag. *)
+val make_polymorphic_flag : bool -> unit
+val use_polymorphic_flag : unit -> bool
 
 val make_warn : bool -> unit
 val if_warn : ('a -> unit) -> 'a -> unit

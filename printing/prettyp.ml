@@ -66,13 +66,15 @@ let int_or_no n = if Int.equal n 0 then str "no" else int n
 let print_basename sp = pr_global (ConstRef sp)
 
 let print_ref reduce ref =
-  let typ = Global.type_of_global ref in
+  let typ = Global.type_of_global_unsafe ref in
   let typ =
     if reduce then
       let ctx,ccl = Reductionops.splay_prod_assum (Global.env()) Evd.empty typ
       in it_mkProd_or_LetIn ccl ctx
     else typ in
-  hov 0 (pr_global ref ++ str " :" ++ spc () ++ pr_ltype typ)
+  let univs = Global.universes_of_global ref in
+  hov 0 (pr_global ref ++ str " :" ++ spc () ++ pr_ltype typ ++ 
+  	   Printer.pr_universe_ctx univs)
 
 (********************************)
 (** Printing implicit arguments *)
@@ -122,7 +124,7 @@ let print_renames_list prefix l =
     hv 2 (prlist_with_sep pr_comma (fun x -> x) (List.map pr_name l))]
 
 let need_expansion impl ref =
-  let typ = Global.type_of_global ref in
+  let typ = Global.type_of_global_unsafe ref in
   let ctx = prod_assum typ in
   let nprods = List.length (List.filter (fun (_,b,_) -> Option.is_empty b) ctx) in
   not (List.is_empty impl) && List.length impl >= nprods &&
@@ -193,7 +195,17 @@ let print_opacity ref =
 (*******************)
 (* *)
 
+let print_polymorphism ref =
+  let poly = Global.is_polymorphic ref in
+  let template_poly = Global.is_template_polymorphic ref in
+    pr_global ref ++ str " is " ++ str 
+      (if poly then "universe polymorphic"
+       else if template_poly then
+	 "template universe polymorphic"
+       else "monomorphic")
+	 
 let print_name_infos ref =
+  let poly = print_polymorphism ref in
   let impls = implicits_of_global ref in
   let scopes = Notation.find_arguments_scope ref in
   let renames =
@@ -205,6 +217,7 @@ let print_name_infos ref =
        print_ref true ref; blankline]
     else
       [] in
+  poly ::
   type_info_for_implicit @
   print_renames_list (mt()) renames @
   print_impargs_list (mt()) impls @
@@ -371,25 +384,25 @@ let print_body = function
 let print_typed_body (val_0,typ) =
   (print_body val_0 ++ fnl () ++ str "     : " ++ pr_ltype typ)
 
-let ungeneralized_type_of_constant_type = function
-  | PolymorphicArity (ctx,a) -> mkArity (ctx, Type a.poly_level)
-  | NonPolymorphicType t -> t
+let ungeneralized_type_of_constant_type t = 
+  Typeops.type_of_constant_type (Global.env ()) t
 
 let print_constant with_values sep sp =
   let cb = Global.lookup_constant sp in
   let val_0 = Declareops.body_of_constant cb in
   let typ = ungeneralized_type_of_constant_type cb.const_type in
-  hov 0 (
+  let univs = Declareops.universes_of_constant cb in
+  hov 0 (pr_polymorphic cb.const_polymorphic ++
     match val_0 with
     | None ->
 	str"*** [ " ++
 	print_basename sp ++ str " : " ++ cut () ++ pr_ltype typ ++
 	str" ]" ++
-	Printer.pr_univ_cstr (Declareops.constraints_of_constant cb)
+	Printer.pr_universe_ctx univs
     | _ ->
 	print_basename sp ++ str sep ++ cut () ++
 	(if with_values then print_typed_body (val_0,typ) else pr_ltype typ)++
-        Printer.pr_univ_cstr (Declareops.constraints_of_constant cb))
+        Printer.pr_universe_ctx univs)
 
 let gallina_print_constant_with_infos sp =
   print_constant true " = " sp ++
@@ -626,7 +639,7 @@ let print_opaque_name qid =
     | IndRef (sp,_) ->
         print_inductive sp
     | ConstructRef cstr ->
-	let ty = Inductiveops.type_of_constructor env cstr in
+	let ty = Inductiveops.type_of_constructor env (cstr,Univ.Instance.empty) in
 	print_typed_value (mkConstruct cstr, ty)
     | VarRef id ->
         let (_,c,ty) = lookup_named id env in

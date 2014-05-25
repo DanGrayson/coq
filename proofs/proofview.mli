@@ -22,8 +22,7 @@
 
 open Term
 
-type proofview 
-
+type proofview
 
 (* Returns a stylised view of a proofview for use by, for instance,
    ide-s. *)
@@ -34,18 +33,20 @@ type proofview
    the [evar_map] context. *)
 val proofview : proofview -> Goal.goal list * Evd.evar_map
 
+type entry
+
 (* Initialises a proofview, the argument is a list of environement, 
    conclusion types, creating that many initial goals. *)
-val init : Evd.evar_map -> (Environ.env * Term.types) list -> proofview
+val init : Evd.evar_map -> (Environ.env * Term.types Univ.in_universe_context_set) list -> entry * proofview
 
 type telescope =
   | TNil
-  | TCons of Environ.env*Term.types*(Term.constr -> telescope)
+  | TCons of Environ.env * Term.types Univ.in_universe_context_set * (Term.constr -> telescope)
 
 (* Like [init], but goals are allowed to be depedenent on one
    another. Dependencies between goals is represented with the type
    [telescope] instead of [list]. *)
-val dependent_init  : Evd.evar_map -> telescope -> proofview
+val dependent_init  : Evd.evar_map -> telescope -> entry * proofview
 
 (* Returns whether this proofview is finished or not. That is,
    if it has empty subgoals in the comb. There could still be unsolved
@@ -55,8 +56,8 @@ val finished : proofview -> bool
 (* Returns the current value of the proofview partial proofs. *)
 val return : proofview -> Evd.evar_map
 
-val partial_proof : proofview -> constr list
-val initial_goals : proofview -> (constr * types) list
+val partial_proof : entry -> proofview -> constr list
+val initial_goals : entry -> (constr * types Univ.in_universe_context_set) list
 val emit_side_effects : Declareops.side_effects -> proofview -> proofview
 
 (*** Focusing operations ***)
@@ -234,6 +235,9 @@ val tclEVARMAP : Evd.evar_map tactic
    environment is returned by {!Proofview.Goal.env}. *)
 val tclENV : Environ.env tactic
 
+(* [tclEFFECTS eff] add the effects [eff] to the current state. *)
+val tclEFFECTS : Declareops.side_effects -> unit tactic
+
 (* Shelves all the goals under focus. The goals are placed on the
    shelf for later use (or being solved by side-effects). *)
 val shelve : unit tactic
@@ -294,6 +298,9 @@ module V82 : sig
 
   val tclEVARS : Evd.evar_map -> unit tactic
 
+  (* Set the evar universe context *)
+  val tclEVARUNIVCONTEXT : Evd.evar_universe_context -> unit tactic
+
   val has_unresolved_evar : proofview -> bool
 
   (* Main function in the implementation of Grab Existential Variables.
@@ -305,10 +312,10 @@ module V82 : sig
      interprete them. *)
   val goals : proofview -> Goal.goal list Evd.sigma
 
-  val top_goals : proofview -> Goal.goal list Evd.sigma
+  val top_goals : entry -> proofview -> Goal.goal list Evd.sigma
   
   (* returns the existential variable used to start the proof *)
-  val top_evars : proofview -> Evd.evar list
+  val top_evars : entry -> Evd.evar list
     
   (* Implements the Existential command *)
   val instantiate_evar : int -> Constrexpr.constr_expr -> proofview -> proofview
@@ -371,6 +378,24 @@ module Goal : sig
   (** [refresh g] updates the [sigma g] to the current value, may be
       useful with compatibility functions like [Tacmach.New.of_old] *)
   val refresh_sigma : 'a t -> 'a t tactic
+end
+
+(** A light interface for building tactics out of partial term. It should be
+    easier to use than the {!Goal} one. *)
+module Refine : sig
+
+  type handle
+  (** A handle to thread along in state-passing style. *)
+
+  val new_evar : handle -> Environ.env -> Constr.types -> handle * Constr.t
+  (** Create a new hole that will be added to the goals to solve. *)
+
+  val refine : (handle -> handle * Constr.t) -> unit tactic
+  (** Given a term with holes that have been generated through {!new_evar}, this
+      function fills the current hole with the given constr and creates goals
+      for all the holes in their generation order. Exceptions raised by the
+      function are caught. *)
+
 end
 
 (* The [NonLogical] module allows to execute side effects in tactics

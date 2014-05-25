@@ -72,8 +72,9 @@ GEXTEND Gram
     [ [ IDENT "Time"; v = vernac -> VernacTime v
       | IDENT "Timeout"; n = natural; v = vernac -> VernacTimeout(n,v)
       | IDENT "Fail"; v = vernac -> VernacFail v
-      | IDENT "Local"; v = vernac_aux -> VernacLocal (true, v)
-      | IDENT "Global"; v = vernac_aux -> VernacLocal (false, v)
+
+      | IDENT "Local"; v = vernac_poly -> VernacLocal (true, v)
+      | IDENT "Global"; v = vernac_poly -> VernacLocal (false, v)
 
       (* Stm backdoor *)
       | IDENT "Stm"; IDENT "JoinDocument"; "." -> VernacStm JoinDocument
@@ -85,7 +86,13 @@ GEXTEND Gram
       | IDENT "Stm"; IDENT "Command"; v = vernac_aux -> VernacStm (Command v)
       | IDENT "Stm"; IDENT "PGLast"; v = vernac_aux -> VernacStm (PGLast v)
 
-      | v = vernac_aux -> v ] 
+      | v = vernac_poly -> v ] 
+    ]
+  ;
+  vernac_poly: 
+    [ [ IDENT "Polymorphic"; v = vernac_aux -> VernacPolymorphic (true, v)
+      | IDENT "Monomorphic"; v = vernac_aux -> VernacPolymorphic (false, v) 
+      | v = vernac_aux -> v ]
     ]
   ;
   vernac_aux:
@@ -171,8 +178,8 @@ GEXTEND Gram
     [ [ thm = thm_token; id = identref; bl = binders; ":"; c = lconstr;
         l = LIST0
           [ "with"; id = identref; bl = binders; ":"; c = lconstr ->
-            (Some id,(bl,c,None)) ] ->
-          VernacStartTheoremProof (thm,(Some id,(bl,c,None))::l, false)
+          (Some id,(bl,c,None)) ] ->
+          VernacStartTheoremProof (thm, (Some id,(bl,c,None))::l, false)
       | stre = assumption_token; nl = inline; bl = assum_list ->
 	  VernacAssumption (stre, nl, bl)
       | stre = assumptions_token; nl = inline; bl = assum_list ->
@@ -183,11 +190,11 @@ GEXTEND Gram
       | IDENT "Let"; id = identref; b = def_body ->
           VernacDefinition ((Some Discharge, Definition), id, b)
       (* Gallina inductive declarations *)
-      | f = finite_token;
+      | priv = private_token; f = finite_token;
         indl = LIST1 inductive_definition SEP "with" ->
 	  let (k,f) = f in
 	  let indl=List.map (fun ((a,b,c,d),e) -> ((a,b,c,k,d),e)) indl in
-          VernacInductive (f,false,indl)
+          VernacInductive (priv,f,false,indl)
       | "Fixpoint"; recs = LIST1 rec_definition SEP "with" ->
           VernacFixpoint (None, recs)
       | IDENT "Let"; "Fixpoint"; recs = LIST1 rec_definition SEP "with" ->
@@ -203,14 +210,16 @@ GEXTEND Gram
           VernacRegister(id, RegisterInline)
   ] ]
   ;
+
   gallina_ext:
-    [ [ b = record_token; infer = infer_token; oc = opt_coercion; name = identref;
+    [ [ priv = private_token; 
+	b = record_token; infer = infer_token; oc = opt_coercion; name = identref;
         ps = binders;
 	s = OPT [ ":"; s = lconstr -> s ];
 	cfs = [ ":="; l = constructor_list_or_record_decl -> l
 	  | -> RecordDecl (None, []) ] ->
 	  let (recf,indf) = b in
-	    VernacInductive (indf,infer,[((oc,name),ps,s,recf,cfs),[]])
+	    VernacInductive (priv,indf,infer,[((oc,name),ps,s,recf,cfs),[]])
   ] ]
   ;
   thm_token:
@@ -251,6 +260,9 @@ GEXTEND Gram
   ;
   infer_token:
     [ [ IDENT "Infer" -> true | -> false ] ]
+  ;
+  private_token:
+    [ [ IDENT "Private" -> true | -> false ] ]
   ;
   record_token:
     [ [ IDENT "Record" -> (Record,BiFinite)

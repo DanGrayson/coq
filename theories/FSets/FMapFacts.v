@@ -437,12 +437,6 @@ intros; do 2 rewrite mem_find_b; rewrite remove_o; unfold eqb.
 destruct (eq_dec x y); auto.
 Qed.
 
-Definition option_map (A B:Type)(f:A->B)(o:option A) : option B :=
- match o with
-  | Some a => Some (f a)
-  | None => None
- end.
-
 Lemma map_o : forall m x (f:elt->elt'),
  find x (map f m) = option_map f (find x m).
 Proof.
@@ -678,7 +672,7 @@ Qed.
 Add Parametric Morphism elt : (@Empty elt)
  with signature Equal ==> iff as Empty_m.
 Proof.
-unfold Empty; intros m m' Hm; intuition.
+unfold Empty; intros m m' Hm. split; intros; intro. 
 rewrite <-Hm in H0; eapply H, H0.
 rewrite Hm in H0; eapply H, H0.
 Qed.
@@ -835,8 +829,8 @@ Module WProperties_fun (E:DecidableType)(M:WSfun E).
   Definition uncurry {U V W : Type} (f : U -> V -> W) : U*V -> W :=
    fun p => f (fst p) (snd p).
 
-  Definition of_list (l : list (key*elt)) :=
-    List.fold_right (uncurry (@add _)) (empty _) l.
+  Definition of_list :=
+    List.fold_right (uncurry (@add _)) (empty elt).
 
   Definition to_list := elements.
 

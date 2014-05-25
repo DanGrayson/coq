@@ -218,6 +218,7 @@ module Tactic :
     val red_expr : raw_red_expr Gram.entry
     val simple_tactic : raw_atomic_tactic_expr Gram.entry
     val simple_intropattern : intro_pattern_expr located Gram.entry
+    val clause_dft_concl : Names.Id.t Loc.located Locus.clause_expr Gram.entry
     val tactic_arg : raw_tactic_arg Gram.entry
     val tactic_expr : raw_tactic_expr Gram.entry
     val binder_tactic : raw_tactic_expr Gram.entry
@@ -280,6 +281,9 @@ val symbol_of_prod_entry_key :
 
 val interp_entry_name : bool (** true to fail on unknown entry *) ->
   int option -> string -> string -> entry_type * prod_entry_key
+
+(** Recover the list of all known tactic notation entries. *)
+val list_entry_names : unit -> (string * entry_type) list
 
 (** Registering/resetting the level of a constr entry *)
 

@@ -29,9 +29,7 @@ type prim_rule =
   | Thin of Id.t list
   | ThinBody of Id.t list
   | Move of bool * Id.t * Id.t move_location
-  | Order of Id.t list
   | Rename of Id.t * Id.t
-  | Change_evars
 
 (** Nowadays, the only rules we'll consider are the primitive rules *)
 

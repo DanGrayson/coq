@@ -60,7 +60,8 @@ type case_printing =
 type case_info =
   { ci_ind        : inductive;
     ci_npar       : int;
-    ci_cstr_ndecls : int array; (** number of real args of each constructor *)
+    ci_cstr_ndecls : int array; (* number of pattern vars of each constructor (with let's)*)
+    ci_cstr_nargs : int array; (* number of pattern vars of each constructor (w/o let's) *)
     ci_pp_info    : case_printing (** not interpreted by the kernel *)
   }
 
@@ -78,6 +79,10 @@ type 'constr pfixpoint =
     (int array * int) * 'constr prec_declaration
 type 'constr pcofixpoint =
     int * 'constr prec_declaration
+type 'a puniverses = 'a Univ.puniverses
+type pconstant = constant puniverses
+type pinductive = inductive puniverses
+type pconstructor = constructor puniverses
 
 type constr =
   | Rel       of int
@@ -90,12 +95,13 @@ type constr =
   | Lambda    of Name.t * constr * constr
   | LetIn     of Name.t * constr * constr * constr
   | App       of constr * constr array
-  | Const     of constant
-  | Ind       of inductive
-  | Construct of constructor
+  | Const     of pconstant
+  | Ind       of pinductive
+  | Construct of pconstructor
   | Case      of case_info * constr * constr * constr array
   | Fix       of constr pfixpoint
   | CoFix     of constr pcofixpoint
+  | Proj      of constant * constr
 
 type existential = constr pexistential
 type rec_declaration = constr prec_declaration
@@ -162,14 +168,17 @@ type engagement = ImpredicativeSet
 
 (** {6 Representation of constants (Definition/Axiom) } *)
 
-type polymorphic_arity = {
-  poly_param_levels : Univ.universe option list;
-  poly_level : Univ.universe;
+
+type template_arity = {
+  template_param_levels : Univ.universe option list;
+  template_level : Univ.universe;
 }
 
-type constant_type =
-  | NonPolymorphicType of constr
-  | PolymorphicArity of rel_context * polymorphic_arity
+type ('a, 'b) declaration_arity = 
+  | RegularArity of 'a
+  | TemplateArity of 'b
+
+type constant_type = (constr, rel_context * template_arity) declaration_arity
 
 (** Inlining level of parameters at functor applications.
     This is ignored by the checker. *)
@@ -179,10 +188,23 @@ type inline = int option
 (** A constant can have no body (axiom/parameter), or a
     transparent body, or an opaque one *)
 
+(** Projections are a particular kind of constant: 
+    always transparent. *)
+
+type projection_body = {
+  proj_ind : mutual_inductive;
+  proj_npars : int;
+  proj_arg : int;
+  proj_type : constr; (* Type under params *)
+  proj_body : constr; (* For compatibility, the match version *)
+}
+
 type constant_def =
   | Undef of inline
   | Def of constr_substituted
   | OpaqueDef of lazy_constr
+
+type constant_universes = Univ.universe_context
 
 type constant_body = {
     const_hyps : section_context; (** New: younger hyp at top *)
@@ -191,6 +213,9 @@ type constant_body = {
     const_body_code : to_patch_substituted;
     const_constraints : Univ.constraints;
     const_native_name : native_name ref;
+    const_polymorphic : bool; (** Is it polymorphic or not *)
+    const_universes : constant_universes;
+    const_proj : projection_body option;
     const_inline_code : bool }
 
 (** {6 Representation of mutual inductive types } *)
@@ -202,14 +227,12 @@ type recarg =
 
 type wf_paths = recarg Rtree.t
 
-type monomorphic_inductive_arity = {
+type regular_inductive_arity = {
   mind_user_arity : constr;
   mind_sort : sorts;
 }
 
-type inductive_arity =
-| Monomorphic of monomorphic_inductive_arity
-| Polymorphic of polymorphic_arity
+type inductive_arity = (regular_inductive_arity, template_arity) declaration_arity
 
 type one_inductive_body = {
 (** {8 Primitive datas } *)
@@ -241,6 +264,10 @@ type one_inductive_body = {
  (** Length of the signature of the constructors (with let, w/o params)
     (not used in the kernel) *)
 
+    mind_consnrealargs : int array;
+ (** Length of the signature of the constructors (w/o let, w/o params)
+    (not used in the kernel) *)
+
     mind_recargs : wf_paths; (** Signature of recursive arguments in the constructors *)
 
 (** {8 Datas for bytecode compilation } *)
@@ -256,7 +283,9 @@ type mutual_inductive_body = {
 
     mind_packets : one_inductive_body array;  (** The component of the mutual inductive block *)
 
-    mind_record : bool;  (** Whether the inductive type has been declared as a record *)
+    mind_record : (constr * constant array) option;  
+    (** Whether the inductive type has been declared as a record, 
+	In that case we get its canonical eta-expansion and list of projections. *)
 
     mind_finite : bool;  (** Whether the type is inductive or coinductive *)
 
@@ -270,7 +299,11 @@ type mutual_inductive_body = {
 
     mind_params_ctxt : rel_context;  (** The context of parameters (includes let-in declaration) *)
 
-    mind_constraints : Univ.constraints;  (** Universes constraints enforced by the inductive declaration *)
+    mind_polymorphic : bool; (** Is it polymorphic or not *)
+
+    mind_universes : Univ.universe_context; (** Local universe variables and constraints *)
+
+    mind_private : bool option; (** allow pattern-matching: Some true ok, Some false blocked *)
 
 (** {8 Data for native compilation } *)
 

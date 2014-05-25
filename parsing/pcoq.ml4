@@ -388,6 +388,9 @@ module Tactic =
     let red_expr = make_gen_entry utactic (rawwit wit_red_expr) "red_expr"
     let simple_intropattern =
       make_gen_entry utactic (rawwit wit_intro_pattern) "simple_intropattern"
+    let clause_dft_concl = 
+      make_gen_entry utactic (rawwit wit_clause_dft_concl) "clause"
+
 
     (* Main entries for ltac *)
     let tactic_arg = Gram.entry_create "tactic:tactic_arg"
@@ -825,3 +828,9 @@ let rec interp_entry_name static up_level s sep =
 	| Some t -> t
 	| None -> ExtraArgType s in
     t, se
+
+let list_entry_names () =
+  let add_entry key (entry, _) accu = (key, entry) :: accu in
+  let ans = Hashtbl.fold add_entry (snd uprim) [] in
+  let ans = Hashtbl.fold add_entry (snd uconstr) ans in
+  Hashtbl.fold add_entry (snd utactic) ans

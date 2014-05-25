@@ -69,13 +69,10 @@ val general_multi_multi_rewrite :
 
 val replace_in_clause_maybe_by : constr -> constr -> clause -> unit Proofview.tactic option -> unit Proofview.tactic
 val replace    : constr -> constr -> unit Proofview.tactic
-val replace_in : Id.t -> constr -> constr -> unit Proofview.tactic
 val replace_by : constr -> constr -> unit Proofview.tactic -> unit Proofview.tactic
-val replace_in_by : Id.t -> constr -> constr -> unit Proofview.tactic -> unit Proofview.tactic
 
 val discr        : evars_flag -> constr with_bindings -> unit Proofview.tactic
 val discrConcl   : unit Proofview.tactic
-val discrClause  : evars_flag -> clause -> unit Proofview.tactic
 val discrHyp     : Id.t -> unit Proofview.tactic
 val discrEverywhere : evars_flag -> unit Proofview.tactic
 val discr_tac    : evars_flag ->
@@ -91,25 +88,22 @@ val dEq : evars_flag -> constr with_bindings induction_arg option -> unit Proofv
 val dEqThen : evars_flag -> (constr -> int -> unit Proofview.tactic) -> constr with_bindings induction_arg option -> unit Proofview.tactic
 
 val make_iterated_tuple :
-  env -> evar_map -> constr -> (constr * types) -> constr * constr * constr
+  env -> evar_map -> constr -> (constr * types) -> evar_map * (constr * constr * constr)
 
 (* The family cutRewriteIn expect an equality statement *)
-val cutRewriteInHyp : bool -> types -> Id.t -> tactic
-val cutRewriteInConcl : bool -> constr -> tactic
+val cutRewriteInHyp : bool -> types -> Id.t -> unit Proofview.tactic
+val cutRewriteInConcl : bool -> constr -> unit Proofview.tactic
 
 (* The family rewriteIn expect the proof of an equality *)
-val rewriteInHyp : bool -> constr -> Id.t -> tactic
-val rewriteInConcl : bool -> constr -> tactic
-
-(* Expect the proof of an equality; fails with raw internal errors *)
-val substClause : bool -> constr -> Id.t option -> tactic
+val rewriteInHyp : bool -> constr -> Id.t -> unit Proofview.tactic
+val rewriteInConcl : bool -> constr -> unit Proofview.tactic
 
 val discriminable : env -> evar_map -> constr -> constr -> bool
 val injectable : env -> evar_map -> constr -> constr -> bool
 
 (* Subst *)
 
-val unfold_body : Id.t -> tactic
+(* val unfold_body : Id.t -> tactic *)
 
 type subst_tactic_flags = {
   only_leibniz : bool;

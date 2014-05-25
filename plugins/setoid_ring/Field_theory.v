@@ -10,6 +10,7 @@ Require Ring.
 Import Ring_polynom Ring_tac Ring_theory InitialRing Setoid List Morphisms.
 Require Import ZArith_base.
 Set Implicit Arguments.
+(* Set Universe Polymorphism. *)
 
 Section MakeFieldPol.
 
@@ -593,7 +594,7 @@ Definition NPEadd e1 e2 :=
   | PEc c, _ => if (c =? 0)%coef then e2 else e1 + e2
   |  _, PEc c => if (c =? 0)%coef then e1 else e1 + e2
     (* Peut t'on factoriser ici ??? *)
-  | _, _ => e1 + e2
+  | _, _ => (e1 + e2)
   end%poly.
 Infix "++" := NPEadd (at level 60, right associativity).
 

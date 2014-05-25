@@ -17,8 +17,9 @@ open Evd
 (** Typecheck a term and return its type *)
 val type_of : env -> evar_map -> constr -> types
 
-(** Typecheck a term and return its type + updated evars *)
-val e_type_of : env -> evar_map -> constr -> evar_map * types
+(** Typecheck a term and return its type + updated evars, optionally refreshing
+    universes *)
+val e_type_of : ?refresh:bool -> env -> evar_map -> constr -> evar_map * types
 
 (** Typecheck a type and return its sort *)
 val sort_of : env -> evar_map -> types -> sorts
@@ -34,5 +35,5 @@ val solve_evars : env -> evar_map ref -> constr -> constr
 
 (** Raise an error message if incorrect elimination for this inductive *)
 (** (first constr is term to match, second is return predicate) *)
-val check_allowed_sort : env -> evar_map -> inductive -> constr -> constr ->
+val check_allowed_sort : env -> evar_map -> pinductive -> constr -> constr ->
   unit

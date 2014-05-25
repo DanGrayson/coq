@@ -11,7 +11,7 @@ Require Export Sorted.
 Require Export Setoid Basics Morphisms.
 Set Implicit Arguments.
 Unset Strict Implicit.
-
+(* Set Universe Polymorphism. *)
 (** * Logical relations over lists with respect to a setoid equality
       or ordering. *)
 
@@ -34,7 +34,7 @@ Hint Constructors InA.
     of the previous one. Having [InA = Exists eqA] raises too
     many compatibility issues. For now, we only state the equivalence: *)
 
-Lemma InA_altdef : forall x l, InA x l <-> Exists (eqA x) l.
+Lemma InA_altdef : forall x l, InA x l <-> Exists (eqA x) l. 
 Proof. split; induction 1; auto. Qed.
 
 Lemma InA_cons : forall x y l, InA x (y::l) <-> eqA x y \/ InA x l.
@@ -104,7 +104,7 @@ Hypothesis eqA_equiv : Equivalence eqA.
 Definition eqarefl := (@Equivalence_Reflexive _ _ eqA_equiv).
 Definition eqatrans := (@Equivalence_Transitive _ _ eqA_equiv).
 Definition eqasym := (@Equivalence_Symmetric _ _ eqA_equiv).
-
+ 
 Hint Resolve eqarefl eqatrans.
 Hint Immediate eqasym.
 
@@ -125,7 +125,6 @@ Proof.
  intros x y z H; revert z; induction H; auto.
  inversion 1; subst; auto. invlist eqlistA; eauto with *.
 Qed.
-
 (** Moreover, [eqlistA] implies [equivlistA]. A reverse result
     will be proved later for sorted list without duplicates. *)
 
@@ -151,7 +150,7 @@ Qed.
 
 Lemma InA_eqA : forall l x y, eqA x y -> InA x l -> InA y l.
 Proof.
- intros l x y H H'. rewrite <- H; auto.
+ intros l x y H H'. rewrite <- H. auto.
 Qed.
 Hint Immediate InA_eqA.
 
@@ -498,7 +497,7 @@ Proof.
  apply Hrec; auto.
  inv; auto.
  eapply NoDupA_split; eauto.
- invlist ForallOrdPairs; auto.
+ invlist ForallOrdPairs; auto. 
  eapply equivlistA_NoDupA_split; eauto.
  transitivity (f y (fold_right f i (s1++s2))).
  apply Comp; auto. reflexivity.
@@ -819,7 +818,6 @@ intros.
 rewrite filter_In in H; destruct H.
 eapply SortA_InfA_InA; eauto.
 Qed.
-
 Arguments eq {A} x _.
 
 Lemma filter_InA : forall f, Proper (eqA==>eq) f ->

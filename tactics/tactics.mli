@@ -26,9 +26,8 @@ open Locus
 
 (** {6 General functions. } *)
 
-val string_of_inductive : constr -> string
-val head_constr       : constr -> constr * constr list
-val head_constr_bound : constr -> constr * constr list
+val head_constr       : constr -> constr
+val head_constr_bound : constr -> constr
 val is_quantified_hypothesis : Id.t -> goal sigma -> bool
 
 exception Bound
@@ -45,6 +44,9 @@ val mutual_fix      :
 val fix             : Id.t option -> int -> tactic
 val mutual_cofix    : Id.t -> (Id.t * constr) list -> int -> tactic
 val cofix           : Id.t option -> tactic
+
+val convert         : constr -> constr -> tactic
+val convert_leq     : constr -> constr -> tactic
 
 (** {6 Introduction tactics. } *)
 
@@ -65,7 +67,6 @@ val intro_using          : Id.t -> unit Proofview.tactic
 val intro_mustbe_force   : Id.t -> unit Proofview.tactic
 val intro_then           : (Id.t -> unit Proofview.tactic) -> unit Proofview.tactic
 val intros_using         : Id.t list -> unit Proofview.tactic
-val intro_erasing        : Id.t -> tactic
 val intros_replacing     : Id.t list -> unit Proofview.tactic
 
 val intros               : unit Proofview.tactic
@@ -75,7 +76,6 @@ val intros               : unit Proofview.tactic
 val depth_of_quantified_hypothesis :
   bool -> quantified_hypothesis -> goal sigma -> int
 
-val intros_until_n_wored : int -> unit Proofview.tactic
 val intros_until         : quantified_hypothesis -> unit Proofview.tactic
 
 val intros_clearing      : bool list -> unit Proofview.tactic
@@ -159,20 +159,19 @@ val unfold_constr     : global_reference -> tactic
 val clear         : Id.t list -> tactic
 val clear_body    : Id.t list -> tactic
 val keep          : Id.t list -> tactic
-val clear_if_overwritten : constr -> intro_pattern_expr located list -> tactic
 
-val specialize    : int option -> constr with_bindings -> tactic
+val specialize    : constr with_bindings -> tactic
 
 val move_hyp      : bool -> Id.t -> Id.t move_location -> tactic
 val rename_hyp    : (Id.t * Id.t) list -> tactic
 
 val revert        : Id.t list -> tactic
+val new_revert    : Id.t list -> unit Proofview.tactic
 
 (** {6 Resolution tactics. } *)
 
 val apply_type : constr -> constr list -> tactic
-val apply_term : constr -> constr list -> tactic
-val bring_hyps : named_context -> tactic
+val bring_hyps : named_context -> unit Proofview.tactic
 
 val apply                 : constr -> tactic
 val eapply                : constr -> tactic
@@ -183,14 +182,12 @@ val apply_with_bindings_gen :
 val apply_with_bindings   : constr with_bindings -> tactic
 val eapply_with_bindings  : constr with_bindings -> tactic
 
-val cut_and_apply         : constr -> tactic
+val cut_and_apply         : constr -> unit Proofview.tactic
 
 val apply_in :
   advanced_flag -> evars_flag -> Id.t -> 
     constr with_bindings located list ->
     intro_pattern_expr located option -> unit Proofview.tactic
-
-val simple_apply_in : Id.t -> constr -> unit Proofview.tactic
 
 (** {6 Elimination tactics. } *)
 
@@ -243,7 +240,6 @@ type elim_scheme = {
 
 
 val compute_elim_sig : ?elimc: constr with_bindings -> types -> elim_scheme
-val rebuild_elimtype_from_scheme: elim_scheme -> types
 
 (** elim principle with the index of its inductive arg *)
 type eliminator = {
@@ -251,19 +247,11 @@ type eliminator = {
   elimbody : constr with_bindings
 }
 
-val elimination_clause_scheme : evars_flag -> ?flags:unify_flags -> 
-  int -> clausenv -> clausenv -> tactic
-
-val elimination_in_clause_scheme : evars_flag -> ?flags:unify_flags -> 
-  Id.t -> int -> clausenv -> clausenv -> tactic
-
-val general_elim_clause_gen : (int -> Clenv.clausenv -> 'a -> tactic) ->
-  'a -> eliminator -> tactic
-
 val general_elim  : evars_flag ->
   constr with_bindings -> eliminator -> tactic
-val general_elim_in : evars_flag -> Id.t ->
-  constr with_bindings -> eliminator -> tactic
+
+val general_elim_clause : evars_flag -> unify_flags -> identifier option ->
+  clausenv -> eliminator -> unit Proofview.tactic
 
 val default_elim  : evars_flag -> constr with_bindings -> unit Proofview.tactic
 val simplest_elim : constr -> unit Proofview.tactic
@@ -272,7 +260,7 @@ val elim :
 
 val simple_induct : quantified_hypothesis -> unit Proofview.tactic
 
-val new_induct : evars_flag -> 
+val induction : evars_flag -> 
   (evar_map * constr with_bindings) induction_arg list ->
   constr with_bindings option ->
     intro_pattern_expr located option * intro_pattern_expr located option ->
@@ -284,7 +272,7 @@ val general_case_analysis : evars_flag -> constr with_bindings ->  unit Proofvie
 val simplest_case         : constr -> unit Proofview.tactic
 
 val simple_destruct          : quantified_hypothesis -> unit Proofview.tactic
-val new_destruct : evars_flag ->
+val destruct : evars_flag ->
   (evar_map * constr with_bindings) induction_arg list ->
   constr with_bindings option ->
     intro_pattern_expr located option * intro_pattern_expr located option ->
@@ -303,16 +291,6 @@ val induction_destruct : rec_flag -> evars_flag ->
 
 val case_type         : constr  -> tactic
 val elim_type         : constr  -> tactic
-
-(** {6 Some eliminations which are frequently used. } *)
-
-val impE : Id.t -> unit Proofview.tactic
-val andE : Id.t -> unit Proofview.tactic
-val orE  : Id.t -> unit Proofview.tactic
-val dImp : clause -> unit Proofview.tactic
-val dAnd : clause -> unit Proofview.tactic
-val dorE : bool -> clause -> unit Proofview.tactic
-
 
 (** {6 Introduction tactics. } *)
 
@@ -344,7 +322,6 @@ val setoid_symmetry : unit Proofview.tactic Hook.t
 val symmetry_red                : bool -> unit Proofview.tactic
 val symmetry                    : unit Proofview.tactic
 val setoid_symmetry_in : (Id.t -> unit Proofview.tactic) Hook.t
-val symmetry_in                 : Id.t -> unit Proofview.tactic
 val intros_symmetry             : clause -> unit Proofview.tactic
 
 val setoid_transitivity : (constr option -> unit Proofview.tactic) Hook.t
@@ -363,19 +340,21 @@ val forward   : unit Proofview.tactic option -> intro_pattern_expr located optio
 val letin_tac : (bool * intro_pattern_expr located) option -> Name.t ->
   constr -> types option -> clause -> unit Proofview.tactic
 val letin_pat_tac : (bool * intro_pattern_expr located) option -> Name.t ->
-  evar_map * constr -> types option -> clause -> unit Proofview.tactic
+  evar_map * constr -> clause -> unit Proofview.tactic
 val assert_tac : Name.t -> types -> unit Proofview.tactic
 val assert_by  : Name.t -> types -> unit Proofview.tactic -> unit Proofview.tactic
 val pose_proof : Name.t -> constr -> unit Proofview.tactic
 
 val generalize      : constr list -> tactic
 val generalize_gen  : ((occurrences * constr) * Name.t) list -> tactic
+val new_generalize  : constr list -> unit Proofview.tactic
+val new_generalize_gen  : ((occurrences * constr) * Name.t) list -> unit Proofview.tactic
+
 val generalize_dep  : ?with_let:bool (** Don't lose let bindings *) -> constr  -> tactic
 
 val unify           : ?state:Names.transparent_state -> constr -> constr -> tactic
-val resolve_classes : tactic
 
-val tclABSTRACT : Id.t option -> unit Proofview.tactic -> tactic
+val tclABSTRACT : Id.t option -> unit Proofview.tactic -> unit Proofview.tactic
 
 val admit_as_an_axiom : unit Proofview.tactic
 
@@ -392,9 +371,7 @@ val subst_one :
 val declare_intro_decomp_eq :
   ((int -> unit Proofview.tactic) -> Coqlib.coq_eq_data * types *
    (types * constr * constr) ->
-   clausenv -> unit Proofview.tactic) -> unit
-
-val emit_side_effects : Declareops.side_effects -> tactic
+   constr * types -> unit Proofview.tactic) -> unit
 
 module Simple : sig
   (** Simplified version of some of the above tactics *)

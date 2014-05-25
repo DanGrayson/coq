@@ -56,7 +56,7 @@ val delete_all_proofs : unit -> unit
 type lemma_possible_guards = Proof_global.lemma_possible_guards
 
 val start_proof :
-  Id.t -> goal_kind -> named_context_val -> constr ->
+  Id.t -> goal_kind -> named_context_val -> constr Univ.in_universe_context_set ->
   ?init_tac:unit Proofview.tactic ->
   Proof_global.proof_terminator -> unit
 
@@ -69,11 +69,11 @@ val start_proof :
 val cook_this_proof :
     Proof_global.proof_object ->
   (Id.t *
-    (Entries.definition_entry * goal_kind))
+    (Entries.definition_entry * Proof_global.proof_universes * goal_kind))
 
 val cook_proof : unit ->
   (Id.t *
-    (Entries.definition_entry * goal_kind))
+    (Entries.definition_entry * Proof_global.proof_universes * goal_kind))
 
 (** {6 ... } *)
 (** [get_pftreestate ()] returns the current focused pending proof.
@@ -149,8 +149,12 @@ val instantiate_nth_evar_com : int -> Constrexpr.constr_expr -> unit
 
 val build_constant_by_tactic :
   Id.t -> named_context_val -> ?goal_kind:goal_kind ->
-    types -> unit Proofview.tactic -> Entries.definition_entry * bool
-val build_by_tactic : env -> types -> unit Proofview.tactic -> constr * bool
+    types Univ.in_universe_context_set -> unit Proofview.tactic -> 
+  Entries.definition_entry * bool * Universes.universe_opt_subst Univ.in_universe_context
+
+val build_by_tactic : env -> ?poly:polymorphic -> 
+  types Univ.in_universe_context_set -> unit Proofview.tactic -> 
+  constr Univ.in_universe_context_set * bool * Universes.universe_opt_subst
 
 (** Declare the default tactic to fill implicit arguments *)
 
@@ -160,11 +164,5 @@ val declare_implicit_tactic : unit Proofview.tactic -> unit
 val clear_implicit_tactic : unit -> unit
 
 (* Raise Exit if cannot solve *)
+(* FIXME: interface: it may incur some new universes etc... *)
 val solve_by_implicit_tactic : env -> Evd.evar_map -> Evd.evar -> constr
-
-
-
-
-
-
-

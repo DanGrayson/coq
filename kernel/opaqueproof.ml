@@ -7,12 +7,17 @@
 (************************************************************************)
 
 open Names
+open Univ
 open Term
 open Mod_subst
 
-type work_list = Id.t array Cmap.t * Id.t array Mindmap.t
-type cooking_info = { modlist : work_list; abstract : Context.named_context } 
-type proofterm = (constr * Univ.constraints) Future.computation
+type work_list = (Instance.t * Id.t array) Cmap.t * 
+  (Instance.t * Id.t array) Mindmap.t
+
+type cooking_info = { 
+  modlist : work_list; 
+  abstract : Context.named_context in_universe_context } 
+type proofterm = (constr * Univ.universe_context_set) Future.computation
 type opaque =
   | Indirect of substitution list * DirPath.t * int (* subst, lib, index *)
   | Direct of cooking_info list * proofterm
@@ -52,7 +57,7 @@ let turn_indirect o = match o with
   | Direct (d,cu) ->
       let cu = Future.chain ~pure:true cu (fun (c, u) -> hcons_constr c, u) in
       match !mk_indirect (d,cu) with
-      | None -> NoIndirect([],cu)
+      | None -> Future.sink cu; NoIndirect([],cu)
       | Some (dp,i) -> Indirect ([],dp,i)
 
 let subst_opaque sub = function
@@ -94,7 +99,7 @@ let force_constraints = function
   | NoIndirect(_,cu) -> snd(Future.force cu)
   | Indirect (_,dp,i) ->
       match !get_univ dp i with
-      | None -> Univ.empty_constraint
+      | None -> Univ.ContextSet.empty
       | Some u -> Future.force u
 
 let get_constraints = function

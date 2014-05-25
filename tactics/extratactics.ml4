@@ -22,6 +22,8 @@ open Evd
 open Equality
 open Misctypes
 
+DECLARE PLUGIN "extratactics"
+
 (**********************************************************************)
 (* admit, replace, discriminate, injection, simplify_eq               *)
 (* cutrewrite, dependent rewrite                                      *)
@@ -30,36 +32,36 @@ TACTIC EXTEND admit
   [ "admit" ] -> [ admit_as_an_axiom ]
 END
 
-let replace_in_clause_maybe_by (sigma1,c1) c2 in_hyp tac =
+let replace_in_clause_maybe_by (sigma1,c1) c2 cl  tac =
   Tacticals.New.tclWITHHOLES false
-    (replace_in_clause_maybe_by c1 c2 (glob_in_arg_hyp_to_clause in_hyp))
+    (replace_in_clause_maybe_by c1 c2 cl)
     sigma1
     (Option.map Tacinterp.eval_tactic tac)
 
-let replace_multi_term dir_opt (sigma,c) in_hyp =
+let replace_multi_term dir_opt (sigma,c) cl =
   Tacticals.New.tclWITHHOLES false
     (replace_multi_term dir_opt c)
     sigma
-    (glob_in_arg_hyp_to_clause in_hyp)
+    cl
 
 TACTIC EXTEND replace
-   ["replace" open_constr(c1) "with" constr(c2) in_arg_hyp(in_hyp) by_arg_tac(tac) ]
--> [ replace_in_clause_maybe_by c1 c2 in_hyp tac ]
+   ["replace" open_constr(c1) "with" constr(c2) clause(cl) by_arg_tac(tac) ]
+-> [ replace_in_clause_maybe_by c1 c2 cl tac ]
 END
 
 TACTIC EXTEND replace_term_left
-  [ "replace"  "->" open_constr(c) in_arg_hyp(in_hyp) ]
-  -> [ replace_multi_term (Some true) c in_hyp ]
+  [ "replace"  "->" open_constr(c) clause(cl) ]
+  -> [ replace_multi_term (Some true) c cl ]
 END
 
 TACTIC EXTEND replace_term_right
-  [ "replace"  "<-" open_constr(c) in_arg_hyp(in_hyp) ]
-  -> [ replace_multi_term (Some false) c in_hyp ]
+  [ "replace"  "<-" open_constr(c) clause(cl) ]
+  -> [ replace_multi_term (Some false) c cl ]
 END
 
 TACTIC EXTEND replace_term
-  [ "replace" open_constr(c) in_arg_hyp(in_hyp) ]
-  -> [ replace_multi_term None c in_hyp ]
+  [ "replace" open_constr(c) clause(cl) ]
+  -> [ replace_multi_term None c cl ]
 END
 
 let induction_arg_of_quantified_hyp = function
@@ -165,15 +167,26 @@ let injHyp id =
   injection_main { it = Term.mkVar id,NoBindings; sigma = sigma; }
 
 TACTIC EXTEND dependent_rewrite
-| [ "dependent" "rewrite" orient(b) constr(c) ] -> [ Proofview.V82.tactic (rewriteInConcl b c) ]
+| [ "dependent" "rewrite" orient(b) constr(c) ] -> [ rewriteInConcl b c ]
 | [ "dependent" "rewrite" orient(b) constr(c) "in" hyp(id) ]
-    -> [ Proofview.V82.tactic (rewriteInHyp b c id) ]
+    -> [ rewriteInHyp b c id ]
 END
 
 TACTIC EXTEND cut_rewrite
-| [ "cutrewrite" orient(b) constr(eqn) ] -> [ Proofview.V82.tactic (cutRewriteInConcl b eqn) ]
+| [ "cutrewrite" orient(b) constr(eqn) ] -> [ cutRewriteInConcl b eqn ]
 | [ "cutrewrite" orient(b) constr(eqn) "in" hyp(id) ]
-    -> [ Proofview.V82.tactic (cutRewriteInHyp b eqn id) ]
+    -> [ cutRewriteInHyp b eqn id ]
+END
+
+(**********************************************************************)
+(* Decompose                                                          *)
+
+TACTIC EXTEND decompose_sum
+| [ "decompose" "sum" constr(c) ] -> [ Elim.h_decompose_or c ]
+END
+
+TACTIC EXTEND decompose_record
+| [ "decompose" "record" constr(c) ] -> [ Elim.h_decompose_and c ]
 END
 
 (**********************************************************************)
@@ -211,22 +224,19 @@ ARGUMENT EXTEND orient_string TYPED AS (bool * string) PRINTED BY pr_orient_stri
 END
 
 TACTIC EXTEND autorewrite
-| [ "autorewrite" "with" ne_preident_list(l) in_arg_hyp(cl) ] ->
-    [ auto_multi_rewrite  l (glob_in_arg_hyp_to_clause  cl) ]
-| [ "autorewrite" "with" ne_preident_list(l) in_arg_hyp(cl) "using" tactic(t) ] ->
+| [ "autorewrite" "with" ne_preident_list(l) clause(cl) ] ->
+    [ auto_multi_rewrite  l ( cl) ]
+| [ "autorewrite" "with" ne_preident_list(l) clause(cl) "using" tactic(t) ] ->
     [
-      let cl =  glob_in_arg_hyp_to_clause cl in
       auto_multi_rewrite_with (Tacinterp.eval_tactic t) l cl
-
     ]
 END
 
 TACTIC EXTEND autorewrite_star
-| [ "autorewrite" "*" "with" ne_preident_list(l) in_arg_hyp(cl) ] ->
-    [ auto_multi_rewrite ~conds:AllMatches l (glob_in_arg_hyp_to_clause  cl) ]
-| [ "autorewrite" "*" "with" ne_preident_list(l) in_arg_hyp(cl) "using" tactic(t) ] ->
-    [ let cl =  glob_in_arg_hyp_to_clause cl in
-	auto_multi_rewrite_with ~conds:AllMatches (Tacinterp.eval_tactic t) l cl ]
+| [ "autorewrite" "*" "with" ne_preident_list(l) clause(cl) ] ->
+    [ auto_multi_rewrite ~conds:AllMatches l cl ]
+| [ "autorewrite" "*" "with" ne_preident_list(l) clause(cl) "using" tactic(t) ] ->
+  [ auto_multi_rewrite_with ~conds:AllMatches (Tacinterp.eval_tactic t) l cl ]
 END
 
 (**********************************************************************)
@@ -255,7 +265,17 @@ TACTIC EXTEND rewrite_star
 
 let add_rewrite_hint bases ort t lcsr =
   let env = Global.env() and sigma = Evd.empty in
-  let f c = Constrexpr_ops.constr_loc c, Constrintern.interp_constr sigma env c, ort, t in
+  let poly = Flags.is_universe_polymorphism () in 
+  let f ce = 
+    let c, ctx = Constrintern.interp_constr sigma env ce in
+    let ctx =
+      if poly then 
+	Evd.evar_universe_context_set ctx
+      else 
+	let cstrs = Evd.evar_universe_context_constraints ctx in
+	  (Global.add_constraints cstrs; Univ.ContextSet.empty)
+    in
+      Constrexpr_ops.constr_loc ce, (c, ctx), ort, t in
   let eqs = List.map f lcsr in
   let add_hints base = add_rew_rules base eqs in
   List.iter add_hints bases
@@ -284,8 +304,8 @@ open Coqlib
 let project_hint pri l2r r =
   let gr = Smartlocate.global_with_alias r in
   let env = Global.env() in
-  let c = Globnames.constr_of_global gr in
-  let t = Retyping.get_type_of env Evd.empty c in
+  let c,ctx = Universes.fresh_global_instance env gr in
+  let t = Retyping.get_type_of env (Evd.from_env ~ctx env) c in
   let t =
     Tacred.reduce_to_quantified_ref env Evd.empty (Lazy.force coq_iff_ref) t in
   let sign,ccl = decompose_prod_assum t in
@@ -297,7 +317,11 @@ let project_hint pri l2r r =
   let c = Reductionops.whd_beta Evd.empty (mkApp (c,Termops.extended_rel_vect 0 sign)) in
   let c = it_mkLambda_or_LetIn
     (mkApp (p,[|mkArrow a (lift 1 b);mkArrow b (lift 1 a);c|])) sign in
-    (pri,true,Auto.PathAny, Globnames.IsConstr c)
+  let id =
+    Nameops.add_suffix (Nametab.basename_of_global gr) ("_proj_" ^ (if l2r then "l2r" else "r2l"))
+  in
+  let c = Declare.declare_definition ~internal:Declare.KernelSilent id (c,ctx) in
+    (pri,false,true,Auto.PathAny, Auto.IsGlobRef (Globnames.ConstRef c))
 
 let add_hints_iff l2r lc n bl =
   Auto.add_hints true bl
@@ -362,12 +386,6 @@ open Leminv
 let seff id = Vernacexpr.VtSideff [id], Vernacexpr.VtLater
 
 VERNAC COMMAND EXTEND DeriveInversionClear
-  [ "Derive" "Inversion_clear" ident(na) hyp(id) ] => [ seff na ]
-  -> [ inversion_lemma_from_goal 1 na id Term.prop_sort false inv_clear_tac ]
-
-| [ "Derive" "Inversion_clear" natural(n) ident(na) hyp(id) ] => [ seff na ]
-  -> [ inversion_lemma_from_goal n na id Term.prop_sort false inv_clear_tac ]
-
 | [ "Derive" "Inversion_clear" ident(na) "with" constr(c) "Sort" sort(s) ]
   => [ seff na ]
   -> [ add_inversion_lemma_exn na c s false inv_clear_tac ]
@@ -385,12 +403,6 @@ VERNAC COMMAND EXTEND DeriveInversion
 
 | [ "Derive" "Inversion" ident(na) "with" constr(c) ] => [ seff na ]
   -> [ add_inversion_lemma_exn na c GProp false inv_tac ]
-
-| [ "Derive" "Inversion" ident(na) hyp(id) ] => [ seff na ]
-  -> [ inversion_lemma_from_goal 1 na id Term.prop_sort false inv_tac ]
-
-| [ "Derive" "Inversion" natural(n) ident(na) hyp(id) ] => [ seff na ]
-  -> [ inversion_lemma_from_goal n na id Term.prop_sort false inv_tac ]
 END
 
 VERNAC COMMAND EXTEND DeriveDependentInversion
@@ -434,8 +446,8 @@ open Tacticals
 
 TACTIC EXTEND instantiate
   [ "instantiate" "(" integer(i) ":=" lglob(c) ")" hloc(hl) ] ->
-    [ Proofview.V82.tactic (instantiate i c hl)  ]
-| [ "instantiate" ] -> [ Proofview.V82.tactic (tclNORMEVAR) ]
+    [ Tacticals.New.tclTHEN (instantiate_tac i c hl) Proofview.V82.nf_evar_goals ]
+| [ "instantiate" ] -> [ Proofview.V82.nf_evar_goals ]
 END
 
 
@@ -488,7 +500,7 @@ let inTransitivity : bool * constr -> obj =
 (* Main entry points *)
 
 let add_transitivity_lemma left lem =
- let lem' = Constrintern.interp_constr Evd.empty (Global.env ()) lem in
+ let lem',ctx (*FIXME*) = Constrintern.interp_constr Evd.empty (Global.env ()) lem in
   add_anonymous_leaf (inTransitivity (left,lem'))
 
 (* Vernacular syntax *)
@@ -528,8 +540,8 @@ END
 
 VERNAC COMMAND EXTEND RetroknowledgeRegister CLASSIFIED AS SIDEFF
  | [ "Register" constr(c) "as" retroknowledge_field(f) "by" constr(b)] ->
-           [ let tc = Constrintern.interp_constr Evd.empty (Global.env ()) c in
-             let tb = Constrintern.interp_constr Evd.empty (Global.env ()) b in
+           [ let tc,ctx = Constrintern.interp_constr Evd.empty (Global.env ()) c in
+             let tb,ctx(*FIXME*) = Constrintern.interp_constr Evd.empty (Global.env ()) b in
              Global.register f tc tb ]
 END
 
@@ -622,9 +634,11 @@ let hResolve id c occ t gl =
           let loc = match Loc.get_loc e with None -> Loc.ghost | Some loc -> loc in
           resolve_hole (subst_hole_with_term (fst (Loc.unloc loc)) c_raw t_hole)
   in
-  let t_constr = resolve_hole (subst_var_with_hole occ id t_raw) in
+  let t_constr,ctx = resolve_hole (subst_var_with_hole occ id t_raw) in
+  let sigma = Evd.merge_universe_context sigma ctx in
   let t_constr_type = Retyping.get_type_of env sigma t_constr in
-  change_in_concl None (mkLetIn (Anonymous,t_constr,t_constr_type,pf_concl gl)) gl
+    tclTHEN (Refiner.tclEVARS sigma)
+     (change_in_concl None (mkLetIn (Anonymous,t_constr,t_constr_type,pf_concl gl))) gl
 
 let hResolve_auto id c t gl =
   let rec resolve_auto n = 
@@ -764,6 +778,11 @@ TACTIC EXTEND constr_eq
     if eq_constr x y then Proofview.tclUNIT () else Tacticals.New.tclFAIL 0 (str "Not equal") ]
 END
 
+TACTIC EXTEND constr_eq_nounivs
+| [ "constr_eq_nounivs" constr(x) constr(y) ] -> [
+    if eq_constr_nounivs x y then Proofview.tclUNIT () else Tacticals.New.tclFAIL 0 (str "Not equal") ]
+END
+
 TACTIC EXTEND is_evar
 | [ "is_evar" constr(x) ] ->
     [ match kind_of_term x with
@@ -787,6 +806,7 @@ let rec has_evar x =
       has_evar t1 || has_evar t2 || has_evar_array ts
     | Fix ((_, tr)) | CoFix ((_, tr)) ->
       has_evar_prec tr
+    | Proj (p, c) -> has_evar c
 and has_evar_array x =
   Array.exists has_evar x
 and has_evar_prec (_, ts1, ts2) =

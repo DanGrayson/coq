@@ -27,7 +27,7 @@ let _ = Errors.register_handler (function
   | _ -> raise Errors.Unhandled)
 
 type fix_exn = exn -> exn
-let id x = prerr_endline "no fix_exn"; x
+let id x = prerr_endline "Future: no fix_exn.\nYou have probably created a Future.computation from a value without passing the ~fix_exn argument.  You probably want to chain with an already existing future instead."; x
 
 module UUID = struct
   type t = int
@@ -89,6 +89,8 @@ let uuid kx = let id, _, _ = get kx in id
 
 let from_val ?(fix_exn=id) v = create fix_exn (Val (v, None))
 let from_here ?(fix_exn=id) v = create fix_exn (Val (v, Some (!freeze ())))
+
+let fix_exn_of ck = let _, fix_exn, _ = get ck in fix_exn
 
 let default_force () = raise NotReady
 let assignement ck = fun v ->
@@ -167,11 +169,12 @@ let transactify f x =
 
 let purify_future f x = if is_over x then f x else purify f x
 let compute x = purify_future (compute ~pure:false) x
-let force x = purify_future (force ~pure:false) x
+let force ~pure x = purify_future (force ~pure) x
 let chain ?(greedy=true) ~pure x f =
   let y = chain ~pure x f in
-  if is_over x && greedy then ignore(force y);
+  if is_over x && greedy then ignore(force ~pure y);
   y
+let force x = force ~pure:false x
 
 let join kx =
   let v = force kx in
@@ -191,3 +194,17 @@ let map2 ?greedy f x l =
         with Failure _ | Invalid_argument _ ->
           Errors.anomaly (Pp.str "Future.map2 length mismatch")) in
     f xi y) 0 l
+
+let print f kx =
+  let open Pp in
+  let (uid, _, x) = get kx in
+  let uid =
+    if UUID.equal uid UUID.invalid then str "[#]"
+    else str "[" ++ int uid ++ str "]"
+  in
+  match !x with
+  | Delegated _ -> str "Delegated" ++ uid
+  | Closure _ -> str "Closure" ++ uid
+  | Val (x, None) -> str "PureVal" ++ uid ++ spc () ++ hov 0 (f x)
+  | Val (x, Some _) -> str "StateVal" ++ uid ++ spc () ++ hov 0 (f x)
+  | Exn e -> str "Exn"  ++ uid ++ spc () ++ hov 0 (str (Printexc.to_string e))

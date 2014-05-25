@@ -105,21 +105,15 @@ type ('trm,'pat,'cst,'ind,'ref,'nam,'lev) gen_atomic_tactic_expr =
   | TacIntroPattern of intro_pattern_expr located list
   | TacIntrosUntil of quantified_hypothesis
   | TacIntroMove of Id.t option * 'nam move_location
-  | TacAssumption
   | TacExact of 'trm
-  | TacExactNoCheck of 'trm
-  | TacVmCastNoCheck of 'trm
   | TacApply of advanced_flag * evars_flag * 'trm with_bindings list *
       ('nam * intro_pattern_expr located option) option
   | TacElim of evars_flag * 'trm with_bindings * 'trm with_bindings option
-  | TacElimType of 'trm
   | TacCase of evars_flag * 'trm with_bindings
-  | TacCaseType of 'trm
   | TacFix of Id.t option * int
   | TacMutualFix of Id.t * int * (Id.t * int * 'trm) list
   | TacCofix of Id.t option
   | TacMutualCofix of Id.t * (Id.t * 'trm) list
-  | TacCut of 'trm
   | TacAssert of
       ('trm,'pat,'cst,'ind,'ref,'nam,'lev) gen_tactic_expr option *
       intro_pattern_expr located option * 'trm
@@ -133,11 +127,7 @@ type ('trm,'pat,'cst,'ind,'ref,'nam,'lev) gen_atomic_tactic_expr =
   | TacInductionDestruct of
       rec_flag * evars_flag * ('trm,'nam) induction_clause_list
   | TacDoubleInduction of quantified_hypothesis * quantified_hypothesis
-  | TacDecomposeAnd of 'trm
-  | TacDecomposeOr of 'trm
   | TacDecompose of 'ind list * 'trm
-  | TacSpecialize of int option * 'trm with_bindings
-  | TacLApply of 'trm
 
   (* Automation tactics *)
   | TacTrivial of debug * 'trm list * string list option
@@ -151,8 +141,6 @@ type ('trm,'pat,'cst,'ind,'ref,'nam,'lev) gen_atomic_tactic_expr =
   | TacRevert of 'nam list
 
   (* Trmuctors *)
-  | TacLeft of evars_flag * 'trm bindings
-  | TacRight of evars_flag * 'trm bindings
   | TacSplit of evars_flag * split_flag * 'trm bindings list
   | TacAnyConstructor of evars_flag *
       ('trm,'pat,'cst,'ind,'ref,'nam,'lev) gen_tactic_expr option
@@ -163,9 +151,7 @@ type ('trm,'pat,'cst,'ind,'ref,'nam,'lev) gen_atomic_tactic_expr =
   | TacChange of 'pat option * 'trm * 'nam clause_expr
 
   (* Equivalence relations *)
-  | TacReflexivity
   | TacSymmetry of 'nam clause_expr
-  | TacTransitivity of 'trm option
 
   (* Equality and inversion *)
   | TacRewrite of evars_flag *
@@ -271,7 +257,7 @@ type r_pat = constr_pattern_expr
 type r_cst = reference or_by_notation
 type r_ind = reference or_by_notation
 type r_ref = reference
-type r_nam  = Id.t located or_metaid
+type r_nam  = Id.t located
 type r_lev = rlevel
 
 type raw_atomic_tactic_expr =

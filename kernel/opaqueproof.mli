@@ -19,7 +19,7 @@ open Mod_subst
     When it is [turn_indirect] the data is relocated to an opaque table
     and the [opaque] is turned into an index. *)
 
-type proofterm = (constr * Univ.constraints) Future.computation
+type proofterm = (constr * Univ.universe_context_set) Future.computation
 type opaque
 
 (** From a [proofterm] to some [opaque]. *)
@@ -31,15 +31,19 @@ val turn_indirect : opaque -> opaque
 (** From a [opaque] back to a [constr]. This might use the
     indirect opaque accessor configured below. *)
 val force_proof : opaque -> constr
-val force_constraints : opaque -> Univ.constraints
+val force_constraints : opaque -> Univ.universe_context_set
 val get_proof : opaque -> Term.constr Future.computation
-val get_constraints : opaque -> Univ.constraints Future.computation option
+val get_constraints : opaque -> Univ.universe_context_set Future.computation option
 
 val subst_opaque : substitution -> opaque -> opaque
 val iter_direct_opaque : (constr -> unit) -> opaque -> opaque
 
-type work_list = Id.t array Cmap.t * Id.t array Mindmap.t
-type cooking_info = { modlist : work_list; abstract : Context.named_context } 
+type work_list = (Univ.Instance.t * Id.t array) Cmap.t * 
+  (Univ.Instance.t * Id.t array) Mindmap.t
+
+type cooking_info = { 
+  modlist : work_list; 
+  abstract : Context.named_context Univ.in_universe_context } 
 
 (* The type has two caveats:
    1) cook_constr is defined after
@@ -62,7 +66,7 @@ val set_indirect_creator :
 val set_indirect_opaque_accessor :
   (DirPath.t -> int -> Term.constr Future.computation) -> unit
 val set_indirect_univ_accessor :
-  (DirPath.t -> int -> Univ.constraints Future.computation option) -> unit
+  (DirPath.t -> int -> Univ.universe_context_set Future.computation option) -> unit
 val set_join_indirect_local_opaque : (DirPath.t -> int -> unit) -> unit
 val set_join_indirect_local_univ : (DirPath.t -> int -> unit) -> unit
 val reset_indirect_creator : unit -> unit

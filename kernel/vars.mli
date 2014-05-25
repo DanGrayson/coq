@@ -53,6 +53,7 @@ val substnl_decl : constr list -> int -> rel_declaration -> rel_declaration
 val substl_decl : constr list -> rel_declaration -> rel_declaration
 val subst1_decl : constr -> rel_declaration -> rel_declaration
 
+val substnl_named_decl : constr list -> int -> named_declaration -> named_declaration
 val subst1_named_decl : constr -> named_declaration -> named_declaration
 val substl_named_decl : constr list -> named_declaration -> named_declaration
 
@@ -67,3 +68,17 @@ val subst_vars : Id.t list -> constr -> constr
 (** [substn_vars n [id1;...;idn] t] substitute [VAR idj] by [Rel j+n-1] in [t]
    if two names are identical, the one of least indice is kept *)
 val substn_vars : int -> Id.t list -> constr -> constr
+
+(** {3 Substitution of universes} *)
+
+open Univ
+
+val subst_univs_fn_constr : universe_subst_fn -> constr -> constr
+val subst_univs_fn_puniverses : universe_level_subst_fn -> 
+  'a puniverses -> 'a puniverses
+
+val subst_univs_constr : universe_subst -> constr -> constr
+val subst_univs_puniverses : universe_level_subst -> 'a puniverses -> 'a puniverses
+val subst_univs_level_constr : universe_level_subst -> constr -> constr
+
+val subst_univs_context : Univ.universe_subst -> rel_context -> rel_context

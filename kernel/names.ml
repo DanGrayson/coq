@@ -147,7 +147,10 @@ struct
       if Int.equal c 0 then compare p1 p2 else c
     end
 
-  let equal p1 p2 = Int.equal (compare p1 p2) 0
+  let rec equal p1 p2 = p1 == p2 || match p1, p2 with
+  | [], [] -> true
+  | id1 :: p1, id2 :: p2 -> Id.equal id1 id2 && equal p1 p2
+  | _ -> false
 
   let rec hash accu = function
   | [] -> accu
@@ -210,7 +213,10 @@ struct
         else
           DirPath.compare dpl dpr
 
-  let equal x y = Int.equal (compare x y) 0
+  let equal x y = x == y ||
+    let (i1, id1, p1) = x in
+    let (i2, id2, p2) = y in
+    Int.equal i1 i2 && Id.equal id1 id2 && DirPath.equal p1 p2
 
   let to_id (_, s, _) = s
 
@@ -286,7 +292,12 @@ module ModPath = struct
       | MPbound _, MPdot _ -> -1
       | MPdot _, _ -> 1
 
-  let equal mp1 mp2 = Int.equal (compare mp1 mp2) 0
+  let rec equal mp1 mp2 = mp1 == mp2 ||
+    match mp1, mp2 with
+    | MPfile p1, MPfile p2 -> DirPath.equal p1 p2
+    | MPbound id1, MPbound id2 -> MBId.equal id1 id2
+    | MPdot (mp1, l1), MPdot (mp2, l2) -> String.equal l1 l2 && equal mp1 mp2
+    | (MPfile _ | MPbound _ | MPdot _), _ -> false
 
   open Hashset.Combine
 
@@ -297,6 +308,11 @@ module ModPath = struct
     combinesmall 3 (combine (hash mp) (Label.hash lbl))
 
   let initial = MPfile DirPath.initial
+
+  let rec dp = function
+  | MPfile sl -> sl
+  | MPbound (_,_,dp) -> dp
+  | MPdot (mp,l) -> dp mp
 
   module Self_Hashcons = struct
     type t = module_path
@@ -373,7 +389,14 @@ module KerName = struct
         if not (Int.equal c 0) then c
         else ModPath.compare kn1.modpath kn2.modpath
 
-  let equal kn1 kn2 = Int.equal (compare kn1 kn2) 0
+  let equal kn1 kn2 =
+    let h1 = kn1.refhash in
+    let h2 = kn2.refhash in
+    if 0 <= h1 && 0 <= h2 && not (Int.equal h1 h2) then false
+    else
+      Label.equal kn1.knlabel kn2.knlabel &&
+      DirPath.equal kn1.dirpath kn2.dirpath &&
+      ModPath.equal kn1.modpath kn2.modpath
 
   open Hashset.Combine
 
@@ -406,7 +429,6 @@ module KerName = struct
   let hcons =
     Hashcons.simple_hcons HashKN.generate
       (ModPath.hcons,DirPath.hcons,String.hcons)
-
 end
 
 module KNmap = HMap.Make(KerName)
@@ -549,28 +571,37 @@ let constr_modpath (ind,_) = ind_modpath ind
 
 let ith_mutual_inductive (mind, _) i = (mind, i)
 let ith_constructor_of_inductive ind i = (ind, i)
+let ith_constructor_of_pinductive (ind,u) i = ((ind,i),u)
 let inductive_of_constructor (ind, i) = ind
 let index_of_constructor (ind, i) = i
 
 let eq_ind (m1, i1) (m2, i2) = Int.equal i1 i2 && MutInd.equal m1 m2
+let eq_user_ind (m1, i1) (m2, i2) =
+  Int.equal i1 i2 && MutInd.UserOrd.equal m1 m2
+
 let ind_ord (m1, i1) (m2, i2) =
   let c = Int.compare i1 i2 in
   if Int.equal c 0 then MutInd.CanOrd.compare m1 m2 else c
 let ind_user_ord (m1, i1) (m2, i2) =
   let c = Int.compare i1 i2 in
   if Int.equal c 0 then MutInd.UserOrd.compare m1 m2 else c
+
 let ind_hash (m, i) =
   Hashset.Combine.combine (MutInd.hash m) (Int.hash i)
 let ind_user_hash (m, i) =
   Hashset.Combine.combine (MutInd.UserOrd.hash m) (Int.hash i)
 
 let eq_constructor (ind1, j1) (ind2, j2) = Int.equal j1 j2 && eq_ind ind1 ind2
+let eq_user_constructor (ind1, j1) (ind2, j2) =
+  Int.equal j1 j2 && eq_user_ind ind1 ind2
+
 let constructor_ord (ind1, j1) (ind2, j2) =
   let c = Int.compare j1 j2 in
   if Int.equal c 0 then ind_ord ind1 ind2 else c
 let constructor_user_ord (ind1, j1) (ind2, j2) =
   let c = Int.compare j1 j2 in
   if Int.equal c 0 then ind_user_ord ind1 ind2 else c
+
 let constructor_hash (ind, i) =
   Hashset.Combine.combine (ind_hash ind) (Int.hash i)
 let constructor_user_hash (ind, i) =
@@ -637,8 +668,7 @@ let hcons_mind = Hashcons.simple_hcons MutInd.HashKP.generate KerName.hcons
 let hcons_ind = Hashcons.simple_hcons Hind.generate hcons_mind
 let hcons_construct = Hashcons.simple_hcons Hconstruct.generate hcons_ind
 
-
-(*******)
+(*****************)
 
 type transparent_state = Id.Pred.t * Cpred.t
 
@@ -648,24 +678,25 @@ let var_full_transparent_state = (Id.Pred.full, Cpred.empty)
 let cst_full_transparent_state = (Id.Pred.empty, Cpred.full)
 
 type 'a tableKey =
-  | ConstKey of Constant.t
+  | ConstKey of 'a
   | VarKey of Id.t
-  | RelKey of 'a
-
+  | RelKey of Int.t
 
 type inv_rel_key = int (* index in the [rel_context] part of environment
 			  starting by the end, {\em inverse}
 			  of de Bruijn indice *)
 
-type id_key = inv_rel_key tableKey
+type id_key = Constant.t tableKey
 
-let eq_id_key ik1 ik2 =
+let eq_table_key f ik1 ik2 =
   if ik1 == ik2 then true
   else match ik1,ik2 with
-  | ConstKey c1, ConstKey c2 -> Constant.UserOrd.equal c1 c2
+  | ConstKey c1, ConstKey c2 -> f c1 c2
   | VarKey id1, VarKey id2 -> Id.equal id1 id2
   | RelKey k1, RelKey k2 -> Int.equal k1 k2
   | _ -> false
+
+let eq_id_key = eq_table_key Constant.UserOrd.equal
 
 let eq_con_chk = Constant.UserOrd.equal
 let eq_mind_chk = MutInd.UserOrd.equal
@@ -751,6 +782,7 @@ let kn_ord = KerName.compare
 (** Compatibility layer for [Constant] *)
 
 type constant = Constant.t
+type projection = constant
 
 let constant_of_kn = Constant.make1
 let constant_of_kn_equiv = Constant.make
@@ -761,6 +793,7 @@ let user_con = Constant.user
 let con_label = Constant.label
 let con_modpath = Constant.modpath
 let eq_constant = Constant.equal
+let eq_constant_key = Constant.UserOrd.equal
 let con_ord = Constant.CanOrd.compare
 let con_user_ord = Constant.UserOrd.compare
 let string_of_con = Constant.to_string

@@ -21,6 +21,27 @@ open Evd
 open Reductionops
 open Pretype_errors
 
+let evd_comb0 f evdref =
+  let (evd',x) = f !evdref in
+    evdref := evd';
+    x
+
+let evd_comb1 f evdref x =
+  let (evd',y) = f !evdref x in
+    evdref := evd';
+    y
+
+let evd_comb2 f evdref x y =
+  let (evd',z) = f !evdref x y in
+    evdref := evd';
+    z
+
+let e_new_global evdref x = 
+  evd_comb1 (Evd.fresh_global (Global.env())) evdref x
+
+let new_global evd x = 
+  Evd.fresh_global (Global.env()) evd x
+
 (****************************************************)
 (* Expanding/testing/exposing existential variables *)
 (****************************************************)
@@ -37,6 +58,8 @@ let rec flush_and_check_evars sigma c =
        | Some c -> flush_and_check_evars sigma c)
   | _ -> map_constr (flush_and_check_evars sigma) c
 
+(* let nf_evar_key = Profile.declare_profile "nf_evar"  *)
+(* let nf_evar = Profile.profile2 nf_evar_key Reductionops.nf_evar *)
 let nf_evar = Reductionops.nf_evar
 let j_nf_evar sigma j =
   { uj_val = nf_evar sigma j.uj_val;
@@ -60,24 +83,38 @@ let env_nf_betaiotaevar sigma env =
     (fun d e ->
       push_rel (map_rel_declaration (Reductionops.nf_betaiota sigma) d) e) env
 
+let nf_evars_universes evm =
+  Universes.nf_evars_and_universes_opt_subst (Reductionops.safe_evar_value evm) 
+    (Evd.universe_subst evm)
+    
+let nf_evars_and_universes evm =
+  let evm = Evd.nf_constraints evm in
+    evm, nf_evars_universes evm
+
+let e_nf_evars_and_universes evdref =
+  evdref := Evd.nf_constraints !evdref;
+  nf_evars_universes !evdref, Evd.universe_subst !evdref
+
+let nf_evar_map_universes evm =
+  let evm = Evd.nf_constraints evm in
+  let subst = Evd.universe_subst evm in
+    if Univ.LMap.is_empty subst then evm, nf_evar evm
+    else
+      let f = nf_evars_universes evm in
+	Evd.raw_map (fun _ -> map_evar_info f) evm, f
+
 let nf_named_context_evar sigma ctx =
-  Context.map_named_context (Reductionops.nf_evar sigma) ctx
+  Context.map_named_context (nf_evar sigma) ctx
 
 let nf_rel_context_evar sigma ctx =
-  Context.map_rel_context (Reductionops.nf_evar sigma) ctx
+  Context.map_rel_context (nf_evar sigma) ctx
 
 let nf_env_evar sigma env =
   let nc' = nf_named_context_evar sigma (Environ.named_context env) in
   let rel' = nf_rel_context_evar sigma (Environ.rel_context env) in
     push_rel_context rel' (reset_with_named_context (val_of_named_context nc') env)
 
-let nf_evar_info evc info =
-  { info with
-    evar_concl = Reductionops.nf_evar evc info.evar_concl;
-    evar_hyps = map_named_val (Reductionops.nf_evar evc) info.evar_hyps;
-    evar_body = match info.evar_body with
-      | Evar_empty -> Evar_empty
-      | Evar_defined c -> Evar_defined (Reductionops.nf_evar evc c) }
+let nf_evar_info evc info = map_evar_info (nf_evar evc) info
 
 let nf_evar_map evm =
   Evd.raw_map (fun _ evi -> nf_evar_info evm evi) evm
@@ -89,7 +126,11 @@ let nf_evar_map_undefined evm =
 (* Auxiliary functions for the conversion algorithms modulo evars
  *)
 
-let has_undefined_evars_or_sorts evd t =
+let has_flexible_level evd l =
+  let a = Univ.Instance.to_array l in
+    Array.exists (fun l -> Evd.is_flexible_level evd l) a
+    
+let has_undefined_evars or_sorts evd t =
   let rec has_ev t =
     match kind_of_term t with
     | Evar (ev,args) ->
@@ -98,13 +139,15 @@ let has_undefined_evars_or_sorts evd t =
             has_ev c; Array.iter has_ev args
         | Evar_empty ->
 	    raise NotInstantiatedEvar)
-    | Sort s when is_sort_variable evd s -> raise Not_found
+    | Ind (_,l) | Const (_,l) | Construct (_,l) 
+	when or_sorts && not (Univ.Instance.is_empty l) -> 
+      raise Not_found
     | _ -> iter_constr has_ev t in
   try let _ = has_ev t in false
   with (Not_found | NotInstantiatedEvar) -> true
 
 let is_ground_term evd t =
-  not (has_undefined_evars_or_sorts evd t)
+  not (has_undefined_evars true evd t)
 
 let is_ground_env evd env =
   let is_ground_decl = function
@@ -311,35 +354,41 @@ let new_pure_evar_full evd evi =
   let evd = Evd.add evd evk evi in
   (evd, evk)
 
-let new_pure_evar evd sign ?(src=default_source) ?filter ?candidates typ =
+let new_pure_evar evd sign ?(src=default_source) ?filter ?candidates ?store typ =
   let newevk = new_untyped_evar() in
-  let evd = evar_declare sign newevk typ ~src ?filter ?candidates evd in
+  let evd = evar_declare sign newevk typ ~src ?filter ?candidates ?store evd in
   (evd,newevk)
 
-let new_evar_instance sign evd typ ?src ?filter ?candidates instance =
+let new_evar_instance sign evd typ ?src ?filter ?candidates ?store instance =
   assert (not !Flags.debug ||
             List.distinct (ids_of_named_context (named_context_of_val sign)));
-  let evd,newevk = new_pure_evar evd sign ?src ?filter ?candidates typ in
+  let evd,newevk = new_pure_evar evd sign ?src ?filter ?candidates ?store typ in
   (evd,mkEvar (newevk,Array.of_list instance))
 
 (* [new_evar] declares a new existential in an env env with type typ *)
 (* Converting the env into the sign of the evar to define *)
-let new_evar evd env ?src ?filter ?candidates typ =
+let new_evar evd env ?src ?filter ?candidates ?store typ =
   let sign,typ',instance,subst,vsubst = push_rel_context_to_named_context env typ in
   let candidates = Option.map (List.map (subst2 subst vsubst)) candidates in
   let instance =
     match filter with
     | None -> instance
     | Some filter -> Filter.filter_list filter instance in
-  new_evar_instance sign evd typ' ?src ?filter ?candidates instance
+  new_evar_instance sign evd typ' ?src ?filter ?candidates ?store instance
 
-let new_type_evar ?src ?filter evd env =
-  let evd', s = new_sort_variable evd in
-  new_evar evd' env ?src ?filter (mkSort s)
+let new_type_evar ?src ?filter rigid evd env =
+  let evd', s = new_sort_variable rigid evd in
+  let evd', e = new_evar evd' env ?src ?filter (mkSort s) in
+    evd', (e, s)
+
+let e_new_type_evar evdref ?src ?filter rigid env =
+  let evd', c = new_type_evar ?src ?filter rigid !evdref env in
+    evdref := evd';
+    c
 
   (* The same using side-effect *)
-let e_new_evar evdref env ?(src=default_source) ?filter ?candidates ty =
-  let (evd',ev) = new_evar !evdref env ~src:src ?filter ?candidates ty in
+let e_new_evar evdref env ?(src=default_source) ?filter ?candidates ?store ty =
+  let (evd',ev) = new_evar !evdref env ~src:src ?filter ?candidates ?store ty in
   evdref := evd';
   ev
 
@@ -470,7 +519,6 @@ let clear_hyps_in_evi evdref hyps concl ids =
   in
   (nhyps,nconcl)
 
-
 (** The following functions return the set of evars immediately
     contained in the object, including defined evars *)
 
@@ -597,6 +645,7 @@ let check_evars env initial_sigma sigma c =
       | _ -> iter_constr proc_rec c
   in proc_rec c
 
+
 (****************************************)
 (* Operations on value/type constraints *)
 (****************************************)
@@ -639,15 +688,25 @@ let define_pure_evar_as_product evd evk =
   let evi = Evd.find_undefined evd evk in
   let evenv = evar_env evi in
   let id = next_ident_away idx (ids_of_named_context (evar_context evi)) in
-  let evd1,dom = new_type_evar evd evenv ~filter:(evar_filter evi) in
+  let s = destSort evi.evar_concl in
+  let evd1,(dom,u1) = new_type_evar univ_flexible_alg evd evenv ~filter:(evar_filter evi) in
   let evd2,rng =
     let newenv = push_named (id, None, dom) evenv in
     let src = evar_source evk evd1 in
-    let filter = Filter.cons true (evar_filter evi) in
-    new_type_evar evd1 newenv ~src ~filter in
+    let filter = Filter.extend 1 (evar_filter evi) in
+      if is_prop_sort s then
+       (* Impredicative product, conclusion must fall in [Prop]. *)
+        new_evar evd1 newenv evi.evar_concl ~src ~filter
+      else
+	let evd3, (rng, srng) =
+	  new_type_evar univ_flexible_alg evd1 newenv ~src ~filter in
+	let prods = Univ.sup (univ_of_sort u1) (univ_of_sort srng) in
+	let evd3 = Evd.set_leq_sort evd3 (Type prods) s in
+	  evd3, rng
+  in
   let prod = mkProd (Name id, dom, subst_var id rng) in
   let evd3 = Evd.define evk prod evd2 in
-  evd3,prod
+    evd3,prod
 
 (* Refine an applied evar to a product and returns its instantiation *)
 
@@ -681,7 +740,7 @@ let define_pure_evar_as_lambda env evd evk =
   let id =
     next_name_away_with_default_using_types "x" na avoid (whd_evar evd dom) in
   let newenv = push_named (id, None, dom) evenv in
-  let filter = Filter.cons true (evar_filter evi) in
+  let filter = Filter.extend 1 (evar_filter evi) in
   let src = evar_source evk evd1 in
   let evd2,body = new_evar evd1 newenv ~src (subst1 (mkVar id) rng) ~filter in
   let lam = mkLambda (Name id, dom, subst_var id body) in
@@ -707,15 +766,18 @@ let rec evar_absorb_arguments env evd (evk,args as ev) = function
 (* Refining an evar to a sort *)
 
 let define_evar_as_sort evd (ev,args) =
-  let evd, s = new_sort_variable evd in
-    Evd.define ev (mkSort s) evd, s
+  let evd, u = new_univ_variable univ_rigid evd in
+  let evi = Evd.find_undefined evd ev in 
+  let s = Type u in
+  let evd' = Evd.define ev (mkSort s) evd in
+    Evd.set_leq_sort evd' (Type (Univ.super u)) (destSort evi.evar_concl), s
 
 (* We don't try to guess in which sort the type should be defined, since
    any type has type Type. May cause some trouble, but not so far... *)
 
 let judge_of_new_Type evd =
-  let evd', s = new_univ_variable evd in
-    evd', Typeops.judge_of_type s
+  let evd', s = new_univ_variable univ_rigid evd in
+    evd', { uj_val = mkSort (Type s); uj_type = mkSort (Type (Univ.super s)) }
 
 (* Propagation of constraints through application and abstraction:
    Given a type constraint on a functional term, returns the type
@@ -748,3 +810,56 @@ let lift_tycon n = Option.map (lift n)
 let pr_tycon env = function
     None -> str "None"
   | Some t -> Termops.print_constr_env env t
+
+open Declarations
+
+let get_template_constructor_type evdref (ind, i) n =
+  let mib,oib = Global.lookup_inductive ind in
+  let ar =
+    match oib.mind_arity with
+    | RegularArity _ -> assert false
+    | TemplateArity templ -> templ
+  in
+  let ty = oib.mind_user_lc.(pred i) in
+  let subst = Inductive.ind_subst (fst ind) mib Univ.Instance.empty in
+  let ty = substl subst ty in
+  let rec aux l ty n =
+    match l, kind_of_term ty with
+    | None :: l, Prod (na, t, t') ->
+      mkProd (na, t, aux l t' (pred n))
+    | Some u :: l, Prod (na, t, t') ->
+      let u' = evd_comb0 (new_univ_variable Evd.univ_flexible) evdref in
+	(* evdref := set_leq_sort !evdref u'l (Type u); *)
+	let s = Univ.LMap.add u
+	  (Option.get (Univ.Universe.level u')) Univ.LMap.empty in
+	let dom = subst_univs_level_constr s t in
+	(* let codom = subst_univs_level_constr s t' in *)
+	  mkProd (na, dom, aux l t' (pred n))
+    | l, LetIn (na, t, b, t') ->
+      mkLetIn (na, t, b, aux l t' n)
+    | _ :: _, _ -> assert false (* All params should be abstracted by a forall or a let-in *)
+    | [], _ -> ty
+  in aux ar.template_param_levels ty n
+
+
+let get_template_constructor_type evdref (ind, i) n =
+  let mib,oib = Global.lookup_inductive ind in
+  let ar =
+    match oib.mind_arity with
+    | RegularArity _ -> assert false
+    | TemplateArity templ -> templ
+  in
+  let ty = oib.mind_user_lc.(pred i) in
+  let subst = Inductive.ind_subst (fst ind) mib Univ.Instance.empty in
+  let ty = substl subst ty in
+    ar.template_param_levels, ty
+
+let get_template_inductive_type evdref ind n =
+  let mib,oib = Global.lookup_inductive ind in
+  let ar =
+    match oib.mind_arity with
+    | RegularArity _ -> assert false
+    | TemplateArity templ -> templ
+  in
+  let ctx = oib.mind_arity_ctxt in
+    ar.template_param_levels, mkArity(ctx, Type ar.template_level)

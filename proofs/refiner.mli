@@ -27,15 +27,19 @@ val refiner : rule -> tactic
 
 (** {6 Tacticals. } *)
 
-(** [tclNORMEVAR] forces propagation of evar constraints *)
-val tclNORMEVAR       : tactic
-
 (** [tclIDTAC] is the identity tactic without message printing*)
 val tclIDTAC          : tactic
 val tclIDTAC_MESSAGE  : Pp.std_ppcmds -> tactic
 
 (** [tclEVARS sigma] changes the current evar map *)
 val tclEVARS : evar_map -> tactic
+val tclEVARUNIVCONTEXT : Evd.evar_universe_context -> tactic
+
+val tclPUSHCONTEXT : Evd.rigid -> Univ.universe_context_set -> tactic -> tactic
+val tclPUSHEVARUNIVCONTEXT : Evd.evar_universe_context -> tactic
+
+val tclPUSHCONSTRAINTS : Univ.constraints -> tactic
+val tclPUSHUNIVERSECONSTRAINTS : Univ.UniverseConstraints.t -> tactic
 
 (** [tclTHEN tac1 tac2 gls] applies the tactic [tac1] to [gls] and applies
    [tac2] to every resulting subgoals *)
@@ -67,10 +71,6 @@ val tclTHENSV         : tactic -> tactic array -> tactic
 
 (** Same with a list of tactics *)
 val tclTHENS         : tactic -> tactic list -> tactic
-
-(** [tclTHENST] is renamed [tclTHENSFIRSTn]
-val tclTHENST        : tactic -> tactic array -> tactic -> tactic
-*)
 
 (** [tclTHENS3PARTS tac1 [|t1 ; ... ; tn|] tac2 [|t'1 ; ... ; t'm|] gls]
    applies the tactic [tac1] to [gls] then, applies [t1], ..., [tn] to
@@ -135,19 +135,6 @@ val tclIFTHENSVELSE   : tactic -> tactic array -> tactic ->tactic
    Equivalent to [(tac1;try tac2)||tac2] *)
 
 val tclIFTHENTRYELSEMUST : tactic -> tactic -> tactic
-
-(** {6 Tactics handling a list of goals. } *)
-
-type tactic_list = goal list sigma -> goal list sigma
-
-val tclFIRSTLIST       : tactic_list list -> tactic_list
-val tclIDTAC_list      : tactic_list
-val first_goal         : 'a list sigma -> 'a sigma
-val apply_tac_list     : tactic -> tactic_list
-val then_tactic_list   : tactic_list -> tactic_list -> tactic_list
-val tactic_list_tactic : tactic_list -> tactic
-val goal_goal_list     : 'a sigma -> 'a list sigma
-
 
 (* Check that holes in arguments have been resolved *)
 (* spiwack: used in [tclWITHHOLES] both newer and older copy. *)

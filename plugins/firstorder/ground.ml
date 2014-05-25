@@ -18,7 +18,7 @@ let update_flags ()=
   let predref=ref Names.Cpred.empty in
   let f coe=
     try
-      let kn=destConst (Classops.get_coercion_value coe) in
+      let kn= fst (destConst (Classops.get_coercion_value coe)) in
 	predref:=Names.Cpred.add kn !predref
     with DestKO -> ()
   in
@@ -119,5 +119,6 @@ let ground_tac solver startseq gl=
 		  end
 	    with Heap.EmptyHeap->solver
       end gl in
-    wrap (List.length (pf_hyps gl)) true (toptac []) (startseq gl) gl
+    let seq, gl' = startseq gl in
+    wrap (List.length (pf_hyps gl)) true (toptac []) seq gl'
 

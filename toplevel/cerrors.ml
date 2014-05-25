@@ -58,22 +58,10 @@ let wrap_vernac_error exn strm =
   Exninfo.copy exn e
 
 let process_vernac_interp_error exn = match exn with
-  | Univ.UniverseInconsistency (o,u,v,p) ->
-    let pr_rel r =
-      match r with
-	  Univ.Eq -> str"=" | Univ.Lt -> str"<" | Univ.Le -> str"<=" in
-    let reason = match p with
-	[] -> mt()
-      | _::_ ->
-	str " because" ++ spc() ++ Univ.pr_uni v ++
-	  prlist (fun (r,v) -> spc() ++ pr_rel r ++ str" " ++ Univ.pr_uni v)
-	  p ++
-	  (if Univ.Universe.equal (snd (List.last p)) u then mt() else
-	      (spc() ++ str "= " ++ Univ.pr_uni u)) in
+  | Univ.UniverseInconsistency i ->
     let msg =
       if !Constrextern.print_universes then
-	spc() ++ str "(cannot enforce" ++ spc() ++ Univ.pr_uni u ++ spc() ++
-          pr_rel o ++ spc() ++ Univ.pr_uni v ++ reason ++ str")"
+	str "." ++ spc() ++ Univ.explain_universe_inconsistency i
       else
 	mt() in
     wrap_vernac_error exn (str "Universe inconsistency" ++ msg ++ str ".")
@@ -102,10 +90,6 @@ let process_vernac_interp_error exn = match exn with
         (str "The reference" ++ spc () ++ Libnames.pr_qualid q ++
 	 spc () ++ str "was not found" ++
 	 spc () ++ str "in the current" ++ spc () ++ str "environment.")
-  | Nametab.GlobalizationConstantError q ->
-      wrap_vernac_error exn
-        (str "No constant of this name:" ++ spc () ++
-         Libnames.pr_qualid q ++ str ".")
   | Refiner.FailError (i,s) ->
       let s = Lazy.force s in
       wrap_vernac_error exn

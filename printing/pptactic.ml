@@ -264,7 +264,7 @@ let pr_extend_gen pr_gen lev s l =
     let p = pr_tacarg_using_rule pr_gen (pl,l) in
     if lev' > lev then surround p else p
   with Not_found ->
-    str s ++ spc() ++ pr_sequence pr_gen l ++ str" (* Generic printer *)"
+    str "<" ++ str s ++ str ">" ++ spc() ++ pr_sequence pr_gen l ++ str" (* Generic printer *)"
 
 let pr_alias_gen pr_gen lev key l =
   try
@@ -623,12 +623,10 @@ let pr_cofix_tac (id,c) =
 let rec pr_atom0 = function
   | TacIntroPattern [] -> str "intros"
   | TacIntroMove (None,MoveLast) -> str "intro"
-  | TacAssumption -> str "assumption"
   | TacAnyConstructor (false,None) -> str "constructor"
   | TacAnyConstructor (true,None) -> str "econstructor"
   | TacTrivial (d,[],Some []) -> str (string_of_debug d ^ "trivial")
   | TacAuto (d,None,[],Some []) -> str (string_of_debug d ^ "auto")
-  | TacReflexivity -> str "reflexivity"
   | TacClear (true,[]) -> str "clear"
   | t -> str "(" ++ pr_atom1 t ++ str ")"
 
@@ -651,10 +649,7 @@ and pr_atom1 = function
   | TacIntroMove (ido,hto) ->
       hov 1 (str"intro" ++ pr_opt pr_id ido ++
              Miscprint.pr_move_location pr_ident hto)
-  | TacAssumption as t -> pr_atom0 t
   | TacExact c -> hov 1 (str "exact" ++ pr_constrarg c)
-  | TacExactNoCheck c -> hov 1 (str "exact_no_check" ++ pr_constrarg c)
-  | TacVmCastNoCheck c -> hov 1 (str "vm_cast_no_check" ++ pr_constrarg c)
   | TacApply (a,ev,cb,inhyp) ->
       hov 1 ((if a then mt() else str "simple ") ++
              str (with_evars ev "apply") ++ spc () ++
@@ -663,10 +658,8 @@ and pr_atom1 = function
   | TacElim (ev,cb,cbo) ->
       hov 1 (str (with_evars ev "elim") ++ pr_arg pr_with_bindings cb ++
         pr_opt pr_eliminator cbo)
-  | TacElimType c -> hov 1 (str "elimtype" ++ pr_constrarg c)
   | TacCase (ev,cb) ->
       hov 1 (str (with_evars ev "case") ++ spc () ++ pr_with_bindings cb)
-  | TacCaseType c -> hov 1 (str "casetype" ++ pr_constrarg c)
   | TacFix (ido,n) -> hov 1 (str "fix" ++ pr_opt pr_id ido ++ pr_intarg n)
   | TacMutualFix (id,n,l) ->
       hov 1 (str "fix" ++ spc () ++ pr_id id ++ pr_intarg n ++ spc() ++
@@ -675,7 +668,6 @@ and pr_atom1 = function
   | TacMutualCofix (id,l) ->
       hov 1 (str "cofix" ++ spc () ++ pr_id id ++ spc() ++
              str"with " ++ prlist_with_sep spc pr_cofix_tac l)
-  | TacCut c -> hov 1 (str "cut" ++ pr_constrarg c)
   | TacAssert (Some tac,ipat,c) ->
       hov 1 (str "assert" ++
              pr_assumption pr_lconstr pr_constr ipat c ++
@@ -726,20 +718,10 @@ and pr_atom1 = function
         (str "double induction" ++
          pr_arg pr_quantified_hypothesis h1 ++
 	 pr_arg pr_quantified_hypothesis h2)
-  | TacDecomposeAnd c ->
-      hov 1 (str "decompose record" ++ pr_constrarg c)
-  | TacDecomposeOr c ->
-      hov 1 (str "decompose sum" ++ pr_constrarg c)
   | TacDecompose (l,c) ->
       hov 1 (str "decompose" ++ spc () ++
         hov 0 (str "[" ++ prlist_with_sep spc pr_ind l
 	  ++ str "]" ++ pr_constrarg c))
-  | TacSpecialize (n,c) ->
-      hov 1 (str "specialize" ++ spc () ++ pr_opt int n ++
-             pr_with_bindings c)
-  | TacLApply c ->
-      hov 1 (str "lapply" ++ pr_constrarg c)
-
   (* Automation tactics *)
   | TacTrivial (_,[],Some []) as x -> pr_atom0 x
   | TacTrivial (d,lems,db) ->
@@ -776,8 +758,6 @@ and pr_atom1 = function
       hov 1 (str "revert" ++ spc () ++ prlist_with_sep spc pr_ident l)
 
   (* Constructors *)
-  | TacLeft (ev,l) -> hov 1 (str (with_evars ev "left") ++ pr_bindings l)
-  | TacRight (ev,l) -> hov 1 (str (with_evars ev "right") ++ pr_bindings l)
   | TacSplit (ev,false,l) -> hov 1 (str (with_evars ev "split") ++ prlist_with_sep pr_comma pr_bindings l)
   | TacSplit (ev,true,l) -> hov 1 (str (with_evars ev "exists") ++ prlist_with_sep (fun () -> str",") pr_ex_bindings l)
   | TacAnyConstructor (ev,Some t) ->
@@ -799,10 +779,7 @@ and pr_atom1 = function
       pr_constr c ++ pr_clauses (Some true) pr_ident h)
 
   (* Equivalence relations *)
-  | TacReflexivity as x -> pr_atom0 x
   | TacSymmetry cls -> str "symmetry" ++ pr_clauses (Some true) pr_ident cls
-  | TacTransitivity (Some c) -> str "transitivity" ++ pr_constrarg c
-  | TacTransitivity None -> str "etransitivity"
 
   (* Equality and inversion *)
   | TacRewrite (ev,l,cl,by) ->
@@ -984,7 +961,7 @@ let raw_printers =
      pr_or_by_notation pr_reference,
      pr_or_by_notation pr_reference,
      pr_reference,
-     pr_or_metaid pr_lident,
+     pr_lident,
      pr_raw_extend,
      pr_raw_alias,
      strip_prod_binders_expr,
@@ -1034,6 +1011,12 @@ let () =
     Miscprint.pr_intro_pattern
     Miscprint.pr_intro_pattern
     Miscprint.pr_intro_pattern;
+  Genprint.register_print0
+    Constrarg.wit_clause_dft_concl
+    (pr_clauses (Some true) (pr_lident))
+    (pr_clauses (Some true) pr_lident)
+    (pr_clauses (Some true) (fun id -> pr_lident (Loc.ghost,id)))
+  ;
   Genprint.register_print0 Constrarg.wit_sort
     pr_glob_sort pr_glob_sort pr_sort;
   Genprint.register_print0 Stdarg.wit_int int int int;

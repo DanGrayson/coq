@@ -73,10 +73,7 @@ module PrintingInductiveMake =
     type t = inductive
     let compare = ind_ord
     let encode = Test.encode
-    let subst subst (kn, ints as obj) =
-      let kn' = subst_ind subst kn in
-	if kn' == kn then obj else
-	  kn', ints
+    let subst subst obj = subst_ind subst obj
     let printer ind = pr_global_env Id.Set.empty (IndRef ind)
     let key = ["Printing";Test.field]
     let title = Test.title
@@ -225,26 +222,28 @@ let update_name na ((_,e),c) =
   | _ ->
       na
 
-let rec decomp_branch n nal b (avoid,env as e) c =
+let rec decomp_branch ndecls nargs nal b (avoid,env as e) c =
   let flag = if b then RenamingForGoal else RenamingForCasesPattern in
-  if Int.equal n 0 then (List.rev nal,(e,c))
+  if Int.equal ndecls 0 then (List.rev nal,(e,c))
   else
-    let na,c,f =
+    let na,c,f,nargs' =
       match kind_of_term (strip_outer_cast c) with
-	| Lambda (na,_,c) -> na,c,compute_displayed_let_name_in
-	| LetIn (na,_,_,c) -> na,c,compute_displayed_name_in
+	| Lambda (na,_,c) -> na,c,compute_displayed_let_name_in,nargs-1
+	| LetIn (na,_,_,c) when ndecls>nargs ->
+            na,c,compute_displayed_name_in,nargs
 	| _ ->
 	    Name (Id.of_string "x"),(applist (lift 1 c, [mkRel 1])),
-	    compute_displayed_name_in in
+	    compute_displayed_name_in,nargs-1 in
     let na',avoid' = f flag avoid na c in
-    decomp_branch (n-1) (na'::nal) b (avoid',add_name na' env) c
+    decomp_branch (ndecls-1) nargs' (na'::nal) b (avoid',add_name na' env) c
 
 let rec build_tree na isgoal e ci cl =
   let mkpat n rhs pl = PatCstr(dl,(ci.ci_ind,n+1),pl,update_name na rhs) in
   let cnl = ci.ci_cstr_ndecls in
+  let cna = ci.ci_cstr_nargs in
   List.flatten
     (List.init (Array.length cl)
-      (fun i -> contract_branch isgoal e (cnl.(i),mkpat i,cl.(i))))
+      (fun i -> contract_branch isgoal e (cnl.(i),cna.(i),mkpat i,cl.(i))))
 
 and align_tree nal isgoal (e,c as rhs) = match nal with
   | [] -> [[],rhs]
@@ -265,8 +264,8 @@ and align_tree nal isgoal (e,c as rhs) = match nal with
 	let mat = align_tree nal isgoal rhs in
 	List.map (fun (hd,rest) -> pat::hd,rest) mat
 
-and contract_branch isgoal e (cn,mkpat,b) =
-  let nal,rhs = decomp_branch cn [] isgoal e b in
+and contract_branch isgoal e (cdn,can,mkpat,b) =
+  let nal,rhs = decomp_branch cdn can [] isgoal e b in
   let mat = align_tree nal isgoal rhs in
   List.map (fun (hd,rhs) -> (mkpat rhs hd,rhs)) mat
 
@@ -371,7 +370,7 @@ let detype_sort = function
   | Type u ->
     GType
       (if !print_universes
-       then Some (Pp.string_of_ppcmds (Univ.pr_uni u))
+       then Some (Pp.string_of_ppcmds (Univ.Universe.pr u))
        else None)
 
 type binder_kind = BProd | BLambda | BLetIn
@@ -381,6 +380,10 @@ type binder_kind = BProd | BLambda | BLetIn
 
 let detype_anonymous = ref (fun loc n -> anomaly ~label:"detype" (Pp.str "index to an anonymous variable"))
 let set_detype_anonymous f = detype_anonymous := f
+
+let option_of_instance l = 
+  if Univ.Instance.is_empty l then None
+  else Some l
 
 let rec detype (isgoal:bool) avoid env t =
   match kind_of_term (collapse_appl t) with
@@ -395,7 +398,7 @@ let rec detype (isgoal:bool) avoid env t =
 	(* Meta in constr are not user-parsable and are mapped to Evar *)
 	GEvar (dl, Evar.unsafe_of_int n, None)
     | Var id ->
-	(try let _ = Global.lookup_named id in GRef (dl, VarRef id)
+	(try let _ = Global.lookup_named id in GRef (dl, VarRef id, None)
 	 with Not_found -> GVar (dl, id))
     | Sort s -> GSort (dl,detype_sort s)
     | Cast (c1,REVERTcast,c2) when not !Flags.raw_print ->
@@ -413,16 +416,26 @@ let rec detype (isgoal:bool) avoid env t =
     | Lambda (na,ty,c) -> detype_binder isgoal BLambda avoid env na ty c
     | LetIn (na,b,_,c) -> detype_binder isgoal BLetIn avoid env na b c
     | App (f,args) ->
-	GApp (dl,detype isgoal avoid env f,
-              Array.map_to_list (detype isgoal avoid env) args)
-    | Const sp -> GRef (dl, ConstRef sp)
+      let mkapp f' args' = 
+ 	match f' with
+ 	| GApp (dl',f',args'') -> 
+ 	  GApp (dl,f',args''@args')
+ 	| _ -> GApp (dl,f',args')
+      in
+ 	mkapp (detype isgoal avoid env f)
+ 	  (Array.map_to_list (detype isgoal avoid env) args)
+        (* GApp (dl,detype isgoal avoid env f, *)
+        (*       Array.map_to_list (detype isgoal avoid env) args) *)
+    | Const (sp,u) -> GRef (dl, ConstRef sp, option_of_instance u)
+    | Proj (p,c) ->
+        GProj (dl, p, detype isgoal avoid env c)
     | Evar (ev,cl) ->
         GEvar (dl, ev,
                Some (List.map (detype isgoal avoid env) (Array.to_list cl)))
-    | Ind ind_sp ->
-	GRef (dl, IndRef ind_sp)
-    | Construct cstr_sp ->
-	GRef (dl, ConstructRef cstr_sp)
+    | Ind (ind_sp,u) ->
+	GRef (dl, IndRef ind_sp, option_of_instance u)
+    | Construct (cstr_sp,u) ->
+	GRef (dl, ConstructRef cstr_sp, option_of_instance u)
     | Case (ci,p,c,bl) ->
 	let comp = computable p (ci.ci_pp_info.ind_nargs) in
 	detype_case comp (detype isgoal avoid env)
@@ -587,7 +600,7 @@ let rec subst_cases_pattern subst pat =
   match pat with
   | PatVar _ -> pat
   | PatCstr (loc,((kn,i),j),cpl,n) ->
-      let kn' = subst_ind subst kn
+      let kn' = subst_mind subst kn
       and cpl' = List.smartmap (subst_cases_pattern subst) cpl in
 	if kn' == kn && cpl' == cpl then pat else
 	  PatCstr (loc,((kn',i),j),cpl',n)
@@ -596,7 +609,7 @@ let (f_subst_genarg, subst_genarg_hook) = Hook.make ()
 
 let rec subst_glob_constr subst raw =
   match raw with
-  | GRef (loc,ref) ->
+  | GRef (loc,ref,u) ->
       let ref',t = subst_global subst ref in
 	if ref' == ref then raw else
          detype false [] [] t
@@ -610,6 +623,12 @@ let rec subst_glob_constr subst raw =
       and rl' = List.smartmap (subst_glob_constr subst) rl in
 	if r' == r && rl' == rl then raw else
 	  GApp(loc,r',rl')
+
+  | GProj (loc,p,c) -> 
+    let p' = subst_constant subst p in
+    let c' = subst_glob_constr subst c in
+      if p' == p && c' == c then raw
+      else GProj (loc,p',c')
 
   | GLambda (loc,n,bk,r1,r2) ->
       let r1' = subst_glob_constr subst r1 and r2' = subst_glob_constr subst r2 in
@@ -633,7 +652,7 @@ let rec subst_glob_constr subst raw =
         let (n,topt) = x in
         let topt' = Option.smartmap
           (fun (loc,(sp,i),y as t) ->
-            let sp' = subst_ind subst sp in
+            let sp' = subst_mind subst sp in
             if sp == sp' then t else (loc,(sp',i),y)) topt in
         if a == a' && topt == topt' then y else (a',(n,topt'))) rl
       and branches' = List.smartmap

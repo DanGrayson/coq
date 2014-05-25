@@ -26,17 +26,13 @@ type retype_error
 exception RetypeError of retype_error
 
 val get_type_of :
-  ?polyprop:bool -> ?refresh:bool -> ?lax:bool ->
-  env -> evar_map -> constr -> types
+  ?polyprop:bool -> ?lax:bool -> env -> evar_map -> constr -> types
 
 val get_sort_of :
   ?polyprop:bool -> env -> evar_map -> types -> sorts
 
 val get_sort_family_of :
   ?polyprop:bool -> env -> evar_map -> types -> sorts_family
-
-(** Makes an assumption from a constr *)
-val get_assumption_of : env -> evar_map -> constr -> types
 
 (** Makes an unsafe judgment from a constr *)
 val get_judgment_of : env -> evar_map -> constr -> unsafe_judgment
@@ -45,4 +41,4 @@ val type_of_global_reference_knowing_parameters : env -> evar_map -> constr ->
   constr array -> types
 
 val type_of_global_reference_knowing_conclusion :
-  env -> evar_map -> constr -> types -> types
+  env -> evar_map -> constr -> types -> evar_map * types

@@ -20,7 +20,6 @@ open Misctypes
 
 (** Tacticals i.e. functions from tactics to tactics. *)
 
-val tclNORMEVAR      : tactic
 val tclIDTAC         : tactic
 val tclIDTAC_MESSAGE : std_ppcmds -> tactic
 val tclORELSE0       : tactic -> tactic -> tactic
@@ -59,8 +58,6 @@ val tclIFTHENSELSE       : tactic -> tactic list -> tactic -> tactic
 val tclIFTHENSVELSE      : tactic -> tactic array -> tactic -> tactic
 val tclIFTHENTRYELSEMUST : tactic -> tactic -> tactic
 
-val tclFIRST_PROGRESS_ON : ('a -> tactic) -> 'a list -> tactic
-
 (** {6 Tacticals applying to hypotheses } *)
 
 val onNthHypId       : int -> (Id.t -> tactic) -> tactic
@@ -95,9 +92,6 @@ val onHyps      : (goal sigma -> named_context) ->
    goal; in particular, it can abstractly refer to the set of
    hypotheses independently of the effective contents of the current goal *)
 
-val tryAllHyps          : (Id.t -> tactic) -> tactic
-val tryAllHypsAndConcl  : (Id.t option -> tactic) -> tactic
-
 val onAllHyps           : (Id.t -> tactic) -> tactic
 val onAllHypsAndConcl   : (Id.t option -> tactic) -> tactic
 
@@ -107,7 +101,7 @@ val onClauseLR : (Id.t option -> tactic) -> clause -> tactic
 (** {6 Elimination tacticals. } *)
 
 type branch_args = {
-  ity        : inductive;   (** the type we were eliminating on *)
+  ity        : pinductive;   (** the type we were eliminating on *)
   largs      : constr list; (** its arguments *)
   branchnum  : int;         (** the branch number *)
   pred       : constr;      (** the predicate we used *)
@@ -138,32 +132,8 @@ val elimination_sort_of_goal : goal sigma -> sorts_family
 val elimination_sort_of_hyp  : Id.t -> goal sigma -> sorts_family
 val elimination_sort_of_clause : Id.t option -> goal sigma -> sorts_family
 
-val general_elim_then_using :
-  (inductive -> goal sigma -> constr) -> rec_flag ->
-  intro_pattern_expr located option -> (branch_args -> tactic) ->
-    constr option -> (arg_bindings * arg_bindings) -> inductive -> clausenv ->
-    tactic
-
-val elimination_then_using :
-  (branch_args -> tactic) -> constr option ->
-    (arg_bindings * arg_bindings) -> constr -> tactic
-
-val elimination_then :
-  (branch_args -> tactic) ->
-    (arg_bindings * arg_bindings) -> constr -> tactic
-
-val case_then_using :
-  intro_pattern_expr located option -> (branch_args -> tactic) ->
-    constr option -> (arg_bindings * arg_bindings) ->
-      inductive -> clausenv -> tactic
-
-val case_nodep_then_using :
-  intro_pattern_expr located option -> (branch_args -> tactic) ->
-    constr option -> (arg_bindings * arg_bindings) ->
-      inductive -> clausenv -> tactic
-
-val simple_elimination_then :
-  (branch_args -> tactic) -> constr -> tactic
+val pf_with_evars :  (goal sigma -> Evd.evar_map * 'a) -> ('a -> tactic) -> tactic
+val pf_constr_of_global : Globnames.global_reference -> (constr -> tactic) -> tactic
 
 val elim_on_ba : (branch_assumptions -> tactic) -> branch_args  -> tactic
 val case_on_ba : (branch_assumptions -> tactic) -> branch_args  -> tactic
@@ -188,11 +158,16 @@ module New : sig
       Ltac error with level more than 0. Otherwise succeeds. *)
   val catch_failerror : exn -> unit tactic
 
+  val tclIDTAC : unit tactic
   val tclTHEN : unit tactic -> unit tactic -> unit tactic
   (* [tclFAIL n msg] fails with [msg] as an error message at level [n]
      (meaning that it will jump over [n] error catching tacticals FROM
      THIS MODULE. *)
   val tclFAIL : int -> Pp.std_ppcmds -> 'a tactic
+
+  val tclZEROMSG : Pp.std_ppcmds -> 'a tactic
+  (** Fail with a [User_Error] containing the given message. *)
+
   val tclOR : unit tactic -> unit tactic -> unit tactic
   val tclONCE : unit tactic -> unit tactic
   val tclEXACTLY_ONCE : unit tactic -> unit tactic
@@ -223,7 +198,6 @@ module New : sig
 
   val tclTRY : unit tactic -> unit tactic
   val tclFIRST : unit tactic list -> unit tactic
-  val tclFIRST_PROGRESS_ON : ('a -> unit tactic) -> 'a list -> unit tactic
   val tclIFTHENELSE : unit tactic -> unit tactic -> unit tactic -> unit tactic
   val tclIFTHENSVELSE : unit tactic -> unit tactic array -> unit tactic -> unit tactic
   val tclIFTHENTRYELSEMUST : unit tactic -> unit tactic -> unit tactic
@@ -239,6 +213,7 @@ module New : sig
 
   val tclTIMEOUT : int -> unit tactic -> unit tactic
 
+  val nLastDecls  : [ `NF ] Proofview.Goal.t -> int -> named_context
 
   val ifOnHyp     : (identifier * types -> bool) ->
     (identifier -> unit Proofview.tactic) -> (identifier -> unit Proofview.tactic) ->
@@ -249,24 +224,30 @@ module New : sig
   val onLastHyp        : (constr -> unit tactic) -> unit tactic
   val onLastDecl       : (named_declaration -> unit tactic) -> unit tactic
 
+  val afterHyp    : Id.t -> (named_context -> unit tactic) -> unit tactic
+
   val tryAllHyps          : (identifier -> unit tactic) -> unit tactic
   val tryAllHypsAndConcl  : (identifier option -> unit tactic) -> unit tactic
   val onClause   : (identifier option -> unit tactic) -> clause -> unit tactic
 
+  val elimination_sort_of_goal : 'a Proofview.Goal.t -> sorts_family
+  val elimination_sort_of_hyp  : Id.t -> 'a Proofview.Goal.t -> sorts_family
+  val elimination_sort_of_clause : Id.t option -> 'a Proofview.Goal.t -> sorts_family
+
   val elimination_then :
     (branch_args -> unit Proofview.tactic) ->
-    (arg_bindings * arg_bindings) -> constr -> unit Proofview.tactic
+    constr -> unit Proofview.tactic
 
   val case_then_using :
     intro_pattern_expr located option -> (branch_args -> unit Proofview.tactic) ->
-    constr option -> (arg_bindings * arg_bindings) ->
-    inductive -> clausenv -> unit Proofview.tactic
+    constr option -> pinductive -> Term.constr * Term.types -> unit Proofview.tactic
 
   val case_nodep_then_using :
     intro_pattern_expr located option -> (branch_args -> unit Proofview.tactic) ->
-    constr option -> (arg_bindings * arg_bindings) ->
-    inductive -> clausenv -> unit Proofview.tactic
+    constr option -> pinductive -> Term.constr * Term.types -> unit Proofview.tactic
 
   val elim_on_ba : (branch_assumptions -> unit Proofview.tactic) -> branch_args  -> unit Proofview.tactic
   val case_on_ba : (branch_assumptions -> unit Proofview.tactic) -> branch_args  -> unit Proofview.tactic
+
+  val pf_constr_of_global : Globnames.global_reference -> (constr -> unit Proofview.tactic) -> unit Proofview.tactic
 end

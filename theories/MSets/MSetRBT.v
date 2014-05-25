@@ -1196,7 +1196,7 @@ Lemma INV_rev l1 l2 acc :
 Proof.
  intros. rewrite rev_append_rev.
  apply SortA_app with X.eq; eauto with *.
- intros x y. inA. eapply l1_lt_acc; eauto.
+ intros x y. inA. eapply @l1_lt_acc; eauto.
 Qed.
 
 (** ** union *)

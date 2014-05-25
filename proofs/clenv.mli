@@ -23,10 +23,8 @@ type clausenv = {
 				    out *)
   templtyp : constr freelisted (** its type *)}
 
-(** Substitution is not applied on templenv (because [subst_clenv] is
-   applied only on hints which typing env is overwritten by the
-   goal env) *)
-val subst_clenv : substitution -> clausenv -> clausenv
+
+val map_clenv : (constr -> constr) -> clausenv -> clausenv
 
 (** subject of clenv (instantiated) *)
 val clenv_value     : clausenv -> constr
@@ -46,6 +44,9 @@ val mk_clenv_from_n :
 val mk_clenv_type_of : Goal.goal sigma -> constr -> clausenv
 val mk_clenv_from_env : env -> evar_map -> int option -> constr * types -> clausenv
 
+(** Refresh the universes in a clenv *)
+val refresh_undefined_univs : clausenv -> clausenv * Univ.universe_level_subst
+
 (** {6 linking of clenvs } *)
 
 val connect_clenv : Goal.goal sigma -> clausenv -> clausenv
@@ -60,11 +61,6 @@ val clenv_unify :
 
 (** unifies the concl of the goal with the type of the clenv *)
 val clenv_unique_resolver :
-  ?flags:unify_flags -> clausenv -> Goal.goal sigma -> clausenv
-
-(** same as above ([allow_K=false]) but replaces remaining metas
-   with fresh evars if [evars_flag] is [true] *)
-val evar_clenv_unique_resolver :
   ?flags:unify_flags -> clausenv -> Goal.goal sigma -> clausenv
 
 val clenv_dependent : clausenv -> metavariable list
@@ -85,9 +81,6 @@ val clenv_missing : clausenv -> metavariable list
 exception NoSuchBinding
 val clenv_constrain_last_binding : constr -> clausenv -> clausenv
 
-(** defines metas corresponding to the name of the bindings *)
-val clenv_match_args : arg_bindings -> clausenv -> clausenv
-
 val clenv_unify_meta_types : ?flags:unify_flags -> clausenv -> clausenv
 
 (** start with a clenv to refine with a given term with bindings *)
@@ -100,10 +93,10 @@ val make_clenv_binding_env_apply :
    clausenv
 
 val make_clenv_binding_apply :
-  Goal.goal sigma -> int option -> constr * constr -> constr bindings ->
+  env -> evar_map -> int option -> constr * constr -> constr bindings ->
    clausenv
 val make_clenv_binding :
-  Goal.goal sigma -> constr * constr -> constr bindings -> clausenv
+  env -> evar_map -> constr * constr -> constr bindings -> clausenv
 
 (** if the clause is a product, add an extra meta for this product *)
 exception NotExtensibleClause

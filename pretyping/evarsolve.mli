@@ -31,15 +31,20 @@ type conv_fun =
 type conv_fun_bool =
   env ->  evar_map -> conv_pb -> constr -> constr -> bool
 
-val evar_define : conv_fun -> ?choose:bool -> env -> evar_map -> 
-  existential -> constr -> evar_map
+val evar_define : conv_fun -> ?choose:bool -> ?dir:bool -> env -> evar_map -> 
+  bool option -> existential -> constr -> evar_map
+
+val refresh_universes : ?all:bool (* Include domains of products *) -> 
+  ?template:bool -> (* Generate template fresh universe variables, to be instantiated eagerly *) 
+  ?with_globals:bool -> bool -> evar_map -> types -> evar_map * types
 
 val solve_refl : ?can_drop:bool -> conv_fun_bool -> env ->  evar_map ->
-  existential_key -> constr array -> constr array -> evar_map
+  bool option -> existential_key -> constr array -> constr array -> evar_map
 
 val solve_evar_evar : ?force:bool ->
-  (env -> evar_map -> existential -> constr -> evar_map) -> conv_fun ->
-  env ->  evar_map -> existential -> existential -> evar_map
+  (env -> evar_map -> bool option -> existential -> constr -> evar_map) ->
+  conv_fun ->
+  env ->  evar_map -> bool option -> existential -> existential -> evar_map
 
 val solve_simple_eqn : conv_fun -> ?choose:bool -> env ->  evar_map ->
   bool option * existential * constr -> unification_result

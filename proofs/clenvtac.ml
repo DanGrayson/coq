@@ -29,6 +29,7 @@ let clenv_cast_meta clenv =
     match kind_of_term u with
       | App _ | Case _ -> crec_hd u
       | Cast (c,_,_) when isMeta c -> u
+      | Proj (p, c) -> mkProj (p, crec_hd c)
       | _  -> map_constr crec u
 
   and crec_hd u =
@@ -43,6 +44,7 @@ let clenv_cast_meta clenv =
       | App(f,args) -> mkApp (crec_hd f, Array.map crec args)
       | Case(ci,p,c,br) ->
 	  mkCase (ci, crec_hd p, crec_hd c, Array.map crec br)
+      | Proj (p, c) -> mkProj (p, crec_hd c)
       | _ -> u
   in
   crec
@@ -68,31 +70,16 @@ let clenv_refine with_evars ?(with_classes=true) clenv gls =
   in
   let clenv = { clenv with evd = evd' } in
   tclTHEN
-    (tclEVARS evd')
-    (refine (clenv_cast_meta clenv (clenv_value clenv)))
+    (tclEVARS (Evd.clear_metas evd'))
+    (refine_no_check (clenv_cast_meta clenv (clenv_value clenv)))
     gls
 
 open Unification
 
 let dft = default_unify_flags
 
-let res_pf clenv ?(with_evars=false) ?(flags=dft) gls =
+let res_pf clenv ?(with_evars=false) ?(flags=dft ()) gls =
   clenv_refine with_evars (clenv_unique_resolver ~flags clenv gls) gls
-
-let elim_res_pf_THEN_i clenv tac gls =
-  let clenv' = (clenv_unique_resolver ~flags:elim_flags clenv gls) in
-  tclTHENLASTn (clenv_refine false clenv') (tac clenv') gls
-
-let new_elim_res_pf_THEN_i clenv tac =
-  Proofview.Goal.enter begin fun gl ->
-    let clenv' = Tacmach.New.of_old (clenv_unique_resolver ~flags:elim_flags clenv) gl in
-    Proofview.tclTHEN
-      (Proofview.V82.tactic (clenv_refine false clenv'))
-      (Proofview.tclEXTEND [] (Proofview.tclUNIT()) (Array.to_list (tac clenv')))
-  end
-
-let e_res_pf clenv = res_pf clenv ~with_evars:true ~flags:dft
-
 
 (* [unifyTerms] et [unify] ne semble pas gérer les Meta, en
    particulier ne semblent pas vérifier que des instances différentes
@@ -120,8 +107,11 @@ let fail_quick_unif_flags = {
 let unifyTerms ?(flags=fail_quick_unif_flags) m n gls =
   let env = pf_env gls in
   let evd = create_goal_evar_defs (project gls) in
-  let evd' = w_unify env evd CONV ~flags m n in
-  tclIDTAC {it = gls.it; sigma =  evd'; }
+    try 
+      let evd' = w_unify env evd CONV ~flags m n in
+	tclIDTAC {it = gls.it; sigma =  evd'; }
+    with e when Errors.noncritical e ->
+      tclFAIL 0 (Errors.print e) gls
 
 let unify ?(flags=fail_quick_unif_flags) m gls =
   let n = pf_concl gls in unifyTerms ~flags m n gls

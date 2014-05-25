@@ -66,7 +66,7 @@ Qed.
 Lemma sqrt_unique : forall a b, b² <= a < (S b)² -> √a == b.
 Proof.
  intros a b (LEb,LTb).
- assert (Ha : 0<=a) by (transitivity b²; trivial using square_nonneg).
+ assert (Ha : 0<=a) by (transitivity (b²); trivial using square_nonneg).
  assert (Hb : 0<=b) by (apply sqrt_spec_nonneg; order).
  assert (Ha': 0<=√a) by now apply sqrt_nonneg.
  destruct (sqrt_spec a Ha) as (LEa,LTa).
@@ -438,7 +438,7 @@ Instance sqrt_up_wd : Proper (eq==>eq) sqrt_up.
 Proof.
  assert (Proper (eq==>eq==>Logic.eq) compare).
   intros x x' Hx y y' Hy. do 2 case compare_spec; trivial; order.
- intros x x' Hx. unfold sqrt_up. rewrite Hx. case compare; now rewrite ?Hx.
+ intros x x' Hx; unfold sqrt_up; rewrite Hx; case compare; now rewrite ?Hx.
 Qed.
 
 (** The spec of [sqrt_up] indeed determines it *)

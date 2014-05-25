@@ -289,14 +289,14 @@ type vernac_expr =
   (* Gallina *)
   | VernacDefinition of
       (locality option * definition_object_kind) * lident * definition_expr
-  | VernacStartTheoremProof of theorem_kind *
+  | VernacStartTheoremProof of theorem_kind * 
       (lident option * (local_binder list * constr_expr * (lident option * recursion_order_expr) option)) list *
         bool
   | VernacEndProof of proof_end
   | VernacExactProof of constr_expr
   | VernacAssumption of (locality option * assumption_object_kind) *
       inline * simple_binder with_coercion list
-  | VernacInductive of inductive_flag * infer_flag * (inductive_expr * decl_notation list) list
+  | VernacInductive of private_flag * inductive_flag * infer_flag * (inductive_expr * decl_notation list) list
   | VernacFixpoint of
       locality option * (fixpoint_expr * decl_notation list) list
   | VernacCoFixpoint of
@@ -428,6 +428,7 @@ type vernac_expr =
 
   (* Flags *)
   | VernacProgram of vernac_expr
+  | VernacPolymorphic of bool * vernac_expr
   | VernacLocal of bool * vernac_expr
 
 and located_vernac_expr = Loc.t * vernac_expr

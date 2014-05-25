@@ -28,11 +28,13 @@ open Misctypes
 open Locus
 open Locusops
 
+DECLARE PLUGIN "eauto"
+
 let eauto_unif_flags = { auto_unif_flags with Unification.modulo_delta = full_transparent_state }
 
 let e_give_exact ?(flags=eauto_unif_flags) c gl = let t1 = (pf_type_of gl c) and t2 = pf_concl gl in
   if occur_existential t1 || occur_existential t2 then
-     tclTHEN (Clenvtac.unify ~flags t1) (exact_check c) gl
+     tclTHEN (Clenvtac.unify ~flags t1) (exact_no_check c) gl
   else exact_check c gl
 
 let assumption id = e_give_exact (mkVar id)
@@ -56,6 +58,25 @@ let registered_e_assumption gl =
 (*   PROLOG tactic                                                      *)
 (************************************************************************)
 
+(*s Tactics handling a list of goals. *)
+
+(* first_goal : goal list sigma -> goal sigma *)
+
+let first_goal gls =
+  let gl = gls.Evd.it and sig_0 = gls.Evd.sigma in
+  if List.is_empty gl then error "first_goal";
+  { Evd.it = List.hd gl; Evd.sigma = sig_0; }
+
+(* tactic -> tactic_list : Apply a tactic to the first goal in the list *)
+
+let apply_tac_list tac glls =
+  let (sigr,lg) = unpackage glls in
+  match lg with
+  | (g1::rest) ->
+      let gl = apply_sig_tac sigr tac g1 in
+      repackage sigr (gl@rest)
+  | _ -> error "apply_tac_list"
+
 let one_step l gl =
   [Proofview.V82.of_tactic Tactics.intro]
   @ (List.map Tactics.Simple.eapply (List.map mkVar (pf_ids_of_hyps gl)))
@@ -67,8 +88,12 @@ let rec prolog l n gl =
   let prol = (prolog l (n-1)) in
   (tclFIRST (List.map (fun t -> (tclTHEN t prol)) (one_step l gl))) gl
 
+let out_term = function
+  | IsConstr (c, _) -> c
+  | IsGlobRef gr -> fst (Universes.fresh_global_instance (Global.env ()) gr)
+
 let prolog_tac l n gl =
-  let l = List.map (prepare_hint (pf_env gl)) l in
+  let l = List.map (fun x -> out_term (pf_apply (prepare_hint false) gl x)) l in
   let n =
     match n with
       | ArgArg n -> n
@@ -91,11 +116,19 @@ open Unification
 
 let priority l = List.map snd (List.filter (fun (pr,_) -> Int.equal pr 0) l)
 
-let unify_e_resolve flags (c,clenv) gls =
-  let clenv' = connect_clenv gls clenv in
+let unify_e_resolve poly flags (c,clenv) gls =
+  let clenv', subst = if poly then Clenv.refresh_undefined_univs clenv 
+  else clenv, Univ.empty_level_subst in
+  let clenv' = connect_clenv gls clenv' in
   let _ = clenv_unique_resolver ~flags clenv' gls in
-  Tactics.Simple.eapply c gls
+  Tactics.Simple.eapply (Vars.subst_univs_level_constr subst c) gls
 
+let e_exact poly flags (c,clenv) =
+  let clenv', subst = 
+    if poly then Clenv.refresh_undefined_univs clenv 
+    else clenv, Univ.empty_level_subst
+  in e_give_exact (* ~flags *) (Vars.subst_univs_level_constr subst c)
+    
 let rec e_trivial_fail_db db_list local_db goal =
   let tacl =
     registered_e_assumption ::
@@ -122,15 +155,15 @@ and e_my_find_search db_list local_db hdc concl =
 	  List.map (fun x -> flags, x) (Hint_db.map_auto (hdc,concl) db)) (local_db::db_list)
   in
   let tac_of_hint =
-    fun (st, {pri=b; pat = p; code=t}) ->
+    fun (st, {pri = b; pat = p; code = t; poly = poly}) ->
       (b,
        let tac =
 	 match t with
-	   | Res_pf (term,cl) -> unify_resolve st (term,cl)
-	   | ERes_pf (term,cl) -> unify_e_resolve st (term,cl)
-	   | Give_exact (c) -> e_give_exact c
+	   | Res_pf (term,cl) -> unify_resolve poly st (term,cl)
+	   | ERes_pf (term,cl) -> unify_e_resolve poly st (term,cl)
+	   | Give_exact (c,cl) -> e_exact poly st (c,cl)
 	   | Res_pf_THEN_trivial_fail (term,cl) ->
-               tclTHEN (unify_e_resolve st (term,cl))
+               tclTHEN (unify_e_resolve poly st (term,cl))
 		 (e_trivial_fail_db db_list local_db)
 	   | Unfold_nth c -> reduce (Unfold [AllOccurrences,c]) onConcl
 	   | Extern tacast -> Proofview.V82.of_tactic (conclPattern concl p tacast)
@@ -143,13 +176,13 @@ and e_trivial_resolve db_list local_db gl =
   try
     priority
       (e_my_find_search db_list local_db
-	 (fst (head_constr_bound gl)) gl)
+	 (head_constr_bound gl) gl)
   with Bound | Not_found -> []
 
 let e_possible_resolve db_list local_db gl =
   try List.map snd
     (e_my_find_search db_list local_db
-	(fst (head_constr_bound gl)) gl)
+	(head_constr_bound gl) gl)
   with Bound | Not_found -> []
 
 let find_first_goal gls =
@@ -179,10 +212,6 @@ module SearchProblem = struct
   let success s = List.is_empty (sig_it s.tacres)
 
   let pr_ev evs ev = Printer.pr_constr_env (Evd.evar_env ev) (Evarutil.nf_evar evs ev.Evd.evar_concl)
-
-  let pr_goals gls =
-    let evars = Evarutil.nf_evar_map (Refiner.project gls) in
-      prlist (pr_ev evars) (sig_it gls)
 
   let filter_tactics glls l =
 (*     let _ = Proof_trees.db_pr_goal (List.hd (sig_it glls)) in *)
@@ -348,6 +377,9 @@ let e_search_auto debug (in_depth,p) lems db_list gl =
     pr_info_nop d;
     error "eauto: search failed"
 
+(* let e_search_auto_key = Profile.declare_profile "e_search_auto" *)
+(* let e_search_auto = Profile.profile5 e_search_auto_key e_search_auto *)
+
 let eauto_with_bases ?(debug=Off) np lems db_list =
   tclTRY (e_search_auto debug np lems db_list)
 
@@ -466,12 +498,10 @@ let autounfold_tac db cls gl =
   | Some [] -> ["core"]
   | Some l -> l
   in
-  autounfold dbs (Extraargs.glob_in_arg_hyp_to_clause cls) gl
-
-open Extraargs
+  autounfold dbs  cls gl
 
 TACTIC EXTEND autounfold
-| [ "autounfold" hintbases(db) in_arg_hyp(id) ] -> [ Proofview.V82.tactic (autounfold_tac db id) ]
+| [ "autounfold" hintbases(db) clause(cl) ] -> [ Proofview.V82.tactic (autounfold_tac db cl) ]
 END
 
 let unfold_head env (ids, csts) c = 
@@ -481,8 +511,8 @@ let unfold_head env (ids, csts) c =
 	(match Environ.named_body id env with
 	| Some b -> true, b
 	| None -> false, c)
-    | Const cst when Cset.mem cst csts ->
-	true, Environ.constant_value env cst
+    | Const (cst,u as c) when Cset.mem cst csts ->
+	true, Environ.constant_value_in env c
     | App (f, args) ->
 	(match aux f with
 	| true, f' -> true, Reductionops.whd_betaiota Evd.empty (mkApp (f', args))
@@ -545,7 +575,7 @@ TACTIC EXTEND autounfoldify
 | [ "autounfoldify" constr(x) ] -> [
   Proofview.V82.tactic (
     let db = match kind_of_term x with
-      | Const c -> Label.to_string (con_label c)
+      | Const (c,_) -> Label.to_string (con_label c)
       | _ -> assert false
     in autounfold ["core";db] onConcl 
   )]

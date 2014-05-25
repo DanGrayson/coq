@@ -195,16 +195,16 @@ Infix "*" := mul : positive_scope.
 
 (** ** Iteration over a positive number *)
 
-Fixpoint iter (n:positive) {A} (f:A -> A) (x:A) : A :=
-  match n with
+Definition iter {A} (f:A -> A) : A -> positive -> A :=
+  fix iter_fix x n := match n with
     | xH => f x
-    | xO n' => iter n' f (iter n' f x)
-    | xI n' => f (iter n' f (iter n' f x))
+    | xO n' => iter_fix (iter_fix x n') n'
+    | xI n' => f (iter_fix (iter_fix x n') n')
   end.
 
 (** ** Power *)
 
-Definition pow (x y:positive) := iter y (mul x) 1.
+Definition pow (x:positive) := iter (mul x) 1.
 
 Infix "^" := pow : positive_scope.
 
@@ -375,7 +375,7 @@ Fixpoint gcdn (n : nat) (a b : positive) : positive :=
 Definition gcd (a b : positive) := gcdn (size_nat a + size_nat b)%nat a b.
 
 (** Generalized Gcd, also computing the division of a and b by the gcd *)
-
+Set Printing Universes.
 Fixpoint ggcdn (n : nat) (a b : positive) : (positive*(positive*positive)) :=
   match n with
     | O => (1,(a,b))
@@ -482,19 +482,19 @@ Fixpoint lxor (p q:positive) : N :=
 
 (** Shifts. NB: right shift of 1 stays at 1. *)
 
-Definition shiftl_nat (p:positive)(n:nat) := nat_rect _ p (fun _ => xO) n.
-Definition shiftr_nat (p:positive)(n:nat) := nat_rect _ p (fun _ => div2) n.
+Definition shiftl_nat (p:positive) := nat_rect _ p (fun _ => xO).
+Definition shiftr_nat (p:positive) := nat_rect _ p (fun _ => div2).
 
 Definition shiftl (p:positive)(n:N) :=
   match n with
     | N0 => p
-    | Npos n => iter n xO p
+    | Npos n => iter xO p n
   end.
 
 Definition shiftr (p:positive)(n:N) :=
   match n with
     | N0 => p
-    | Npos n => iter n div2 p
+    | Npos n => iter div2 p n
   end.
 
 (** Checking whether a particular bit is set or not *)

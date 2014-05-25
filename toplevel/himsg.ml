@@ -65,7 +65,7 @@ let contract3' env a b c = function
       contract3 env a b c, ConversionFailed (env',t1,t2)
   | NotSameArgSize | NotSameHead | NoCanonicalStructure
   | MetaOccurInBody _ | InstanceNotSameType _
-  | UnifUnivInconsistency as x -> contract3 env a b c, x
+  | UnifUnivInconsistency _ as x -> contract3 env a b c, x
 
 (** Printers *)
 
@@ -143,9 +143,15 @@ let rec pr_disjunction pr = function
   | a::l -> pr a ++ str "," ++ spc () ++ pr_disjunction pr l
   | [] -> assert false
 
+let pr_puniverses f env (c,u) = 
+  f env c ++ 
+  (if Flags.is_universe_polymorphism () && not (Univ.Instance.is_empty u) then
+    str"(*" ++ Univ.Instance.pr u ++ str"*)"
+  else mt())
+
 let explain_elim_arity env ind sorts c pj okinds =
   let env = make_all_name_different env in
-  let pi = pr_inductive env ind in
+  let pi = pr_inductive env (fst ind) in
   let pc = pr_lconstr_env env c in
   let msg = match okinds with
   | Some(kp,ki,explanation) ->
@@ -200,14 +206,14 @@ let explain_number_branches env sigma cj expn =
   str "expects " ++  int expn ++ str " branches."
 
 let explain_ill_formed_branch env sigma c ci actty expty =
-  let simp t = Reduction.nf_betaiota (Evarutil.nf_evar sigma t) in
+  let simp t = Reduction.nf_betaiota env (Evarutil.nf_evar sigma t) in
   let c = Evarutil.nf_evar sigma c in
   let env = make_all_name_different env in
   let pc = pr_lconstr_env env c in
   let pa, pe = pr_explicit env (simp actty) (simp expty) in
   strbrk "In pattern-matching on term" ++ brk(1,1) ++ pc ++
   spc () ++ strbrk "the branch for constructor" ++ spc () ++
-  quote (pr_constructor env ci) ++
+  quote (pr_puniverses pr_constructor env ci) ++
   spc () ++ str "has type" ++ brk(1,1) ++ pa ++ spc () ++
   str "which should be" ++ brk(1,1) ++ pe ++ str "."
 
@@ -260,8 +266,12 @@ let explain_unification_error env sigma p1 p2 = function
         quote (pr_existential_key evk) ++ str ":" ++ spc () ++
         str "cannot unify" ++ t ++ spc () ++ str "and" ++ spc () ++
         u ++ str ")"
-    | UnifUnivInconsistency ->
-        spc () ++ str "(Universe inconsistency)"
+    | UnifUnivInconsistency p ->
+        if !Constrextern.print_universes then
+	  spc () ++ str "(Universe inconsistency: " ++ 
+	    Univ.explain_universe_inconsistency p ++ str")"
+	else
+          spc () ++ str "(Universe inconsistency)"
 
 let explain_actual_type env sigma j t reason =
   let env = make_all_name_different env in
@@ -513,7 +523,7 @@ let explain_var_not_found env id =
   spc () ++ str "was not found" ++
   spc () ++ str "in the current" ++ spc () ++ str "environment" ++ str "."
 
-let explain_wrong_case_info env ind ci =
+let explain_wrong_case_info env (ind,u) ci =
   let pi = pr_inductive (Global.env()) ind in
   if eq_ind ci.ci_ind ind then
     str "Pattern-matching expression on an object of inductive type" ++
@@ -584,6 +594,10 @@ let explain_non_linear_unification env m t =
   strbrk " which would require to abstract twice on " ++
   pr_lconstr_env env t ++ str "."
 
+let explain_unsatisfied_constraints env cst =
+  strbrk "Unsatisfied constraints: " ++ Univ.pr_constraints cst ++ 
+    spc () ++ str "(maybe a bugged tactic)."
+
 let explain_type_error env sigma err =
   let env = make_all_name_different env in
   match err with
@@ -619,6 +633,8 @@ let explain_type_error env sigma err =
      explain_ill_typed_rec_body env sigma i lna vdefj vargs
   | WrongCaseInfo (ind,ci) ->
       explain_wrong_case_info env ind ci
+  | UnsatisfiedConstraints cst ->
+      explain_unsatisfied_constraints env cst
 
 let explain_pretype_error env sigma err =
   let env = Evarutil.env_nf_betaiotaevar sigma env in
@@ -998,7 +1014,7 @@ let error_not_allowed_case_analysis isrec kind i =
   str (if isrec then "Induction" else "Case analysis") ++
   strbrk " on sort " ++ pr_sort kind ++
   strbrk " is not allowed for inductive definition " ++
-  pr_inductive (Global.env()) i ++ str "."
+  pr_inductive (Global.env()) (fst i) ++ str "."
 
 let error_not_mutual_in_scheme ind ind' =
   if eq_ind ind ind' then
@@ -1064,23 +1080,6 @@ let explain_wrong_numarg_inductive env ind n =
   str "The inductive type " ++ pr_inductive env ind ++
   str " expects " ++ str (decline_string n "argument") ++ str "."
 
-let explain_wrong_predicate_arity env pred nondep_arity dep_arity=
-  let env = make_all_name_different env in
-  let pp = pr_lconstr_env env pred in
-  str "The elimination predicate " ++ spc () ++ pp ++ fnl () ++
-  str "should be of arity" ++ spc () ++
-  pr_lconstr_env env nondep_arity ++ spc () ++
-  str "(for non dependent case) or" ++
-  spc () ++ pr_lconstr_env env dep_arity ++ spc () ++
-  str "(for dependent case)."
-
-let explain_needs_inversion env x t =
-  let env = make_all_name_different env in
-  let px = pr_lconstr_env env x in
-  let pt = pr_lconstr_env env t in
-  str "Sorry, I need inversion to compile pattern matching on term " ++
-  px ++ str " of type: " ++ pt ++ str "."
-
 let explain_unused_clause env pats =
 (* Without localisation
   let s = if List.length pats > 1 then "s" else "" in
@@ -1112,10 +1111,6 @@ let explain_pattern_matching_error env = function
       explain_wrong_numarg_constructor env c n
   | WrongNumargInductive (c,n) ->
       explain_wrong_numarg_inductive env c n
-  | WrongPredicateArity (pred,n,dep) ->
-      explain_wrong_predicate_arity env pred n dep
-  | NeedsInversion (x,t) ->
-      explain_needs_inversion env x t
   | UnusedClause tms ->
       explain_unused_clause env tms
   | NonExhaustive tms ->

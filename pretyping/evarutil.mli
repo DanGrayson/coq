@@ -23,23 +23,32 @@ val mk_new_meta : unit -> constr
 (** {6 Creating a fresh evar given their type and context} *)
 val new_evar :
   evar_map -> env -> ?src:Loc.t * Evar_kinds.t -> ?filter:Filter.t ->
-  ?candidates:constr list -> types -> evar_map * constr
+  ?candidates:constr list -> ?store:Store.t -> types -> evar_map * constr
 
 val new_pure_evar :
   evar_map -> named_context_val -> ?src:Loc.t * Evar_kinds.t -> ?filter:Filter.t ->
-  ?candidates:constr list -> types -> evar_map * evar
+  ?candidates:constr list -> ?store:Store.t -> types -> evar_map * evar
 
 val new_pure_evar_full : evar_map -> evar_info -> evar_map * evar
 
 (** the same with side-effects *)
 val e_new_evar :
   evar_map ref -> env -> ?src:Loc.t * Evar_kinds.t -> ?filter:Filter.t ->
-  ?candidates:constr list -> types -> constr
+  ?candidates:constr list -> ?store:Store.t -> types -> constr
 
 (** Create a new Type existential variable, as we keep track of 
     them during type-checking and unification. *)
 val new_type_evar :
-  ?src:Loc.t * Evar_kinds.t -> ?filter:Filter.t -> evar_map -> env -> evar_map * constr
+  ?src:Loc.t * Evar_kinds.t -> ?filter:Filter.t -> rigid -> evar_map -> env -> 
+  evar_map * (constr * sorts)
+
+val e_new_type_evar : evar_map ref ->
+  ?src:Loc.t * Evar_kinds.t -> ?filter:Filter.t -> rigid -> env -> constr * sorts
+
+(** Polymorphic constants *)
+
+val new_global : evar_map -> Globnames.global_reference -> evar_map * constr
+val e_new_global : evar_map ref -> Globnames.global_reference -> constr
 
 (** Create a fresh evar in a context different from its definition context:
    [new_evar_instance sign evd ty inst] creates a new evar of context
@@ -48,7 +57,9 @@ val new_type_evar :
    of [inst] are typed in the occurrence context and their type (seen
    as a telescope) is [sign] *)
 val new_evar_instance :
- named_context_val -> evar_map -> types -> ?src:Loc.t * Evar_kinds.t -> ?filter:Filter.t -> ?candidates:constr list -> constr list -> evar_map * constr
+ named_context_val -> evar_map -> types -> 
+  ?src:Loc.t * Evar_kinds.t -> ?filter:Filter.t -> ?candidates:constr list -> 
+  ?store:Store.t -> constr list -> evar_map * constr
 
 val make_pure_subst : evar_info -> constr array -> (Id.t * constr) list
 
@@ -65,6 +76,9 @@ val head_evar : constr -> existential_key (** may raise NoHeadEvar *)
 (* Expand head evar if any *)
 val whd_head_evar :  evar_map -> constr -> constr
 
+(* [has_undefined_evars or_sorts evd c] checks if [c] has undefined evars
+   and optionally if it contains undefined sorts. *)
+val has_undefined_evars : bool -> evar_map -> constr -> bool
 val is_ground_term :  evar_map -> constr -> bool
 val is_ground_env  :  evar_map -> env -> bool
 (** [check_evars env initial_sigma extended_sigma c] fails if some
@@ -160,6 +174,15 @@ val jv_nf_betaiotaevar :
   evar_map -> unsafe_judgment array -> unsafe_judgment array
 (** Presenting terms without solved evars *)
 
+val nf_evars_universes : evar_map -> constr -> constr
+
+val nf_evars_and_universes : evar_map -> evar_map * (constr -> constr)
+val e_nf_evars_and_universes : evar_map ref -> (constr -> constr) * Universes.universe_opt_subst
+
+(** Normalize the evar map w.r.t. universes, after simplification of constraints.
+    Return the substitution function for constrs as well. *)
+val nf_evar_map_universes : evar_map -> evar_map * (constr -> constr)
+
 (** Replacing all evars, possibly raising [Uninstantiated_evar] *)
 exception Uninstantiated_evar of existential_key
 val flush_and_check_evars :  evar_map -> constr -> constr
@@ -189,3 +212,16 @@ val push_rel_context_to_named_context : Environ.env -> types ->
   named_context_val * types * constr list * constr list * (identifier*constr) list
 
 val generalize_evar_over_rels : evar_map -> existential -> types * constr list
+
+(** Evar combinators *)
+
+val evd_comb0 : (evar_map -> evar_map * 'a) -> evar_map ref -> 'a
+val evd_comb1 : (evar_map -> 'b -> evar_map * 'a) -> evar_map ref -> 'b -> 'a
+val evd_comb2 : (evar_map -> 'b -> 'c -> evar_map * 'a) -> evar_map ref -> 'b -> 'c -> 'a
+
+(* val get_template_constructor_type : evar_map ref -> constructor -> int -> types *)
+val get_template_constructor_type : evar_map ref -> constructor -> int -> 
+  (Univ.universe_level option list * types)
+
+val get_template_inductive_type : evar_map ref -> inductive -> int -> 
+  (Univ.universe_level option list * types)

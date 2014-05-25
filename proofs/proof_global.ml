@@ -63,11 +63,14 @@ let _ =
 
 (* Extra info on proofs. *)
 type lemma_possible_guards = int list list
+type proof_universes = Universes.universe_opt_subst Univ.in_universe_context
 
 type proof_object = {
   id : Names.Id.t;
   entries : Entries.definition_entry list;
   persistence : Decl_kinds.goal_kind;
+  universes: proof_universes;
+  (* constraints : Univ.constraints; *)
 }
 
 type proof_ending =
@@ -223,7 +226,7 @@ let start_proof id str goals terminator =
   let initial_state = {
     pid = id;
     terminator = Ephemeron.create terminator;
-    proof = Proof.start Evd.empty goals;
+    proof = Proof.start (Evd.from_env (Global.env ())) goals;
     endline_tactic = None;
     section_vars = None;
     strength = str;
@@ -234,7 +237,7 @@ let start_dependent_proof id str goals terminator =
   let initial_state = {
     pid = id;
     terminator = Ephemeron.create terminator;
-    proof = Proof.dependent_start Evd.empty goals;
+    proof = Proof.dependent_start (Evd.from_env (Global.env ())) goals;
     endline_tactic = None;
     section_vars = None;
     strength = str;
@@ -263,20 +266,74 @@ let get_open_goals () =
 
 let close_proof ?feedback_id ~now fpl =
   let { pid; section_vars; strength; proof; terminator } = cur_pstate () in
+  let poly = pi2 strength (* Polymorphic *) in
   let initial_goals = Proof.initial_goals proof in
+  let fpl, univs = Future.split2 fpl in
+  let univsubst, make_body =
+    if poly || now then
+      let make_usubst (usubst, uctx) =
+	let ctx, subst = 
+	  Universes.simplify_universe_context (Univ.ContextSet.of_context uctx) 
+	in
+	let nf x = 
+	  let nf x = Universes.nf_evars_and_universes_opt_subst (fun _ -> None) usubst x in
+	    Vars.subst_univs_level_constr subst (nf x)
+	in
+	let subst = 
+	  Univ.LMap.union usubst (Univ.LMap.map (fun v -> Some (Univ.Universe.make v)) subst)
+	in
+	let univsubst = (subst, Univ.ContextSet.to_context ctx) in
+	  univsubst, nf
+      in
+      let make_body nf t _octx ((c, ctx), eff) =
+	let body = nf c and typ = nf t in
+	let used_univs = 
+	  Univ.LSet.union (Universes.universes_of_constr body)
+	    (Universes.universes_of_constr typ)
+	in
+	let ctx = Universes.restrict_universe_context ctx used_univs in
+	let p = (body, Univ.ContextSet.empty),eff in
+	let univs = Univ.ContextSet.to_context ctx in
+	  (univs, typ), p
+      in
+      let make_body nf t octx p = 
+	Future.split2 (Future.chain ~pure:true p (make_body nf t octx))
+      in
+      let univsubst =
+	Future.chain ~pure:true univs make_usubst
+      in univsubst, make_body
+    else
+      let ctx = 
+	List.fold_left (fun acc (c, (t, octx)) -> 
+	  Univ.ContextSet.union octx acc)
+	  Univ.ContextSet.empty initial_goals
+      in
+      let univs = Univ.ContextSet.to_context ctx in
+      let univsubst = (Univ.LMap.empty, univs) in
+      let make_body nf t octx p = Future.from_val (univs, t), p in
+	Future.from_val (univsubst, fun x -> x), make_body
+  in
+  let univsubst, nf = Future.force univsubst in
   let entries =
-    Future.map2 (fun p (c, t) -> { Entries.
-      const_entry_body = p;
-      const_entry_secctx = section_vars;
-      const_entry_feedback = feedback_id;
-      const_entry_type  = Some t;
-      const_entry_inline_code = false;
-      const_entry_opaque = true })
-    fpl initial_goals in
-  if now then
-    List.iter (fun x ->ignore(Future.force x.Entries.const_entry_body)) entries;
-  { id = pid; entries = entries; persistence = strength },
+    Future.map2 (fun p (c, (t, octx)) -> 
+      let univstyp, body = make_body nf t octx p in
+      let univs, typ = Future.force univstyp in
+	{ Entries.
+	  const_entry_body = body;
+	  const_entry_secctx = section_vars;
+	  const_entry_feedback = feedback_id;
+	  const_entry_type  = Some typ;
+	  const_entry_inline_code = false;
+	  const_entry_opaque = true;
+	  const_entry_universes = univs;
+	  const_entry_polymorphic = poly;
+	  const_entry_proj = None})
+      fpl initial_goals in
+  { id = pid; entries = entries; persistence = strength; universes = univsubst },
   Ephemeron.get terminator
+
+type closed_proof_output = Entries.proof_output list * 
+    Universes.universe_opt_subst Univ.in_universe_context
 
 let return_proof () =
   let { proof } = cur_pstate () in
@@ -294,10 +351,15 @@ let return_proof () =
         error(str"Attempt to save a proof with existential " ++
               str"variables still non-instantiated") in
   let eff = Evd.eval_side_effects evd in
+  let evd = Evd.nf_constraints evd in
+  let subst = Evd.universe_subst evd in
+  let ctx = Evd.universe_context_set evd in
   (** ppedrot: FIXME, this is surely wrong. There is no reason to duplicate
       side-effects... This may explain why one need to uniquize side-effects
       thereafter... *)
-  List.map (fun (c, _) -> (Evarutil.nf_evar evd c, eff)) initial_goals
+  let proofs = 
+    List.map (fun (c, _) -> ((Evarutil.nf_evars_universes evd c, ctx), eff)) initial_goals in
+    proofs, (subst, Univ.ContextSet.to_context ctx)
 
 let close_future_proof ~feedback_id proof =
   close_proof ~feedback_id ~now:false proof
@@ -311,6 +373,9 @@ let set_terminator hook =
   match !pstates with
   | [] -> raise NoCurrentProof
   | p :: ps -> pstates := { p with terminator = Ephemeron.create hook } :: ps
+
+
+
 
 (**********************************************************)
 (*                                                        *)
@@ -456,8 +521,10 @@ let _ =
 
 module V82 = struct
   let get_current_initial_conclusions () =
-    let { pid; strength; proof } = cur_pstate () in
-    pid, (List.map snd (Proof.initial_goals proof), strength)
+  let { pid; strength; proof } = cur_pstate () in
+  let initial = Proof.initial_goals proof in
+  let goals = List.map (fun (o, (c, ctx)) -> c) initial in
+    pid, (goals, strength)
 end
 
 type state = pstate list

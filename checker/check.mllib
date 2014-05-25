@@ -30,6 +30,7 @@ Ephemeron
 Future
 CUnix
 System
+Profile
 RemoteCounter
 Envars
 Predicate
@@ -38,6 +39,7 @@ Names
 Univ
 Esubst
 Term
+Print
 Declarations
 Environ
 Closure

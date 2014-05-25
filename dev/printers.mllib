@@ -39,7 +39,6 @@ Explore
 Predicate
 Rtree
 Heap
-Dnet
 Genarg
 Stateid
 Ephemeron
@@ -50,6 +49,7 @@ Monad
 Names
 Univ
 Esubst
+Uint31
 Sorts
 Evar
 Constr
@@ -61,6 +61,8 @@ Cbytecodes
 Copcodes
 Cemitcodes
 Nativevalues
+Primitives
+Nativeinstr
 Future
 Opaqueproof
 Declareops
@@ -79,6 +81,7 @@ Type_errors
 Modops
 Inductive
 Typeops
+Fast_typeops
 Indtypes
 Cooking
 Term_typing
@@ -86,6 +89,7 @@ Subtyping
 Mod_typing
 Nativelibrary
 Safe_typing
+Unionfind
 
 Summary
 Nameops
@@ -104,6 +108,7 @@ Locusops
 Miscops
 Termops
 Namegen
+Universes
 Evd
 Glob_ops
 Redops
@@ -115,7 +120,6 @@ Cbv
 Pretype_errors
 Evarutil
 Evarsolve
-Term_dnet
 Recordops
 Evarconv
 Arguments_renaming
@@ -185,4 +189,9 @@ Himsg
 Cerrors
 Locality
 Vernacinterp
+Dischargedhypsmap
+Discharge
+Declare
+Ind_tables
 Top_printers
+

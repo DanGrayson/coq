@@ -146,7 +146,7 @@ let mkTacCase with_evar = function
   (* Reinterpret ident as notations for variables in the context *)
   (* because we don't know if they are quantified or not *)
   | [ElimOnIdent id,(None,None)],None,None ->
-      TacCase (with_evar,(CRef (Ident id),NoBindings))
+      TacCase (with_evar,(CRef (Ident id,None),NoBindings))
   | ic ->
       if List.exists (function (ElimOnAnonHyp _,_) -> true | _ -> false) (pi1 ic)
       then
@@ -216,7 +216,7 @@ let merge_occurrences loc cl = function
 GEXTEND Gram
   GLOBAL: simple_tactic constr_with_bindings quantified_hypothesis
   bindings red_expr int_or_var open_constr
-  simple_intropattern;
+  simple_intropattern clause_dft_concl;
 
   int_or_var:
     [ [ n = integer  -> ArgArg n
@@ -228,10 +228,7 @@ GEXTEND Gram
   ;
   (* An identifier or a quotation meta-variable *)
   id_or_meta:
-    [ [ id = identref -> AI id
-
-      (* This is used in quotations *)
-      | id = METAIDENT -> MetaId (!@loc, id) ] ]
+    [ [ id = identref -> id ] ]
   ;
   open_constr:
     [ [ c = constr -> ((),c) ] ]
@@ -532,10 +529,7 @@ GEXTEND Gram
       | IDENT "intro"; id = ident -> TacIntroMove (Some id, MoveLast)
       | IDENT "intro" -> TacIntroMove (None, MoveLast)
 
-      | IDENT "assumption" -> TacAssumption
       | IDENT "exact"; c = constr -> TacExact c
-      | IDENT "exact_no_check"; c = constr -> TacExactNoCheck c
-      | IDENT "vm_cast_no_check"; c = constr -> TacVmCastNoCheck c
 
       | IDENT "apply"; cl = LIST1 constr_with_bindings SEP ",";
           inhyp = in_hyp_as -> TacApply (true,false,cl,inhyp)
@@ -549,10 +543,8 @@ GEXTEND Gram
           TacElim (false,cl,el)
       | IDENT "eelim"; cl = constr_with_bindings; el = OPT eliminator ->
           TacElim (true,cl,el)
-      | IDENT "elimtype"; c = constr -> TacElimType c
       | IDENT "case"; icl = induction_clause_list -> mkTacCase false icl
       | IDENT "ecase"; icl = induction_clause_list -> mkTacCase true icl
-      | IDENT "casetype"; c = constr -> TacCaseType c
       | "fix"; n = natural -> TacFix (None,n)
       | "fix"; id = ident; n = natural -> TacFix (Some id,n)
       | "fix"; id = ident; n = natural; "with"; fd = LIST1 fixdecl ->
@@ -588,7 +580,6 @@ GEXTEND Gram
       | IDENT "pose"; IDENT "proof"; c = lconstr; ipat = as_ipat ->
 	  TacAssert (None,ipat,c)
 
-      | IDENT "cut"; c = constr -> TacCut c
       | IDENT "generalize"; c = constr ->
 	  TacGeneralize [((AllOccurrences,c),Names.Anonymous)]
       | IDENT "generalize"; c = constr; l = LIST1 constr ->
@@ -599,10 +590,6 @@ GEXTEND Gram
           l = LIST0 [","; c = pattern_occ; na = as_name -> (c,na)] ->
           TacGeneralize (((nl,c),na)::l)
       | IDENT "generalize"; IDENT "dependent"; c = constr -> TacGeneralizeDep c
-
-      | IDENT "specialize"; n = OPT natural; lcb = constr_with_bindings ->
-	  TacSpecialize (n,lcb)
-      | IDENT "lapply"; c = constr -> TacLApply c
 
       (* Derived basic tactics *)
       | IDENT "simple"; IDENT"induction"; h = quantified_hypothesis ->
@@ -619,8 +606,6 @@ GEXTEND Gram
 	  TacInductionDestruct(false,false,icl)
       | IDENT "edestruct";  icl = induction_clause_list ->
 	  TacInductionDestruct(false,true,icl)
-      | IDENT "decompose"; IDENT "record" ; c = constr -> TacDecomposeAnd c
-      | IDENT "decompose"; IDENT "sum"; c = constr -> TacDecomposeOr c
       | IDENT "decompose"; "["; l = LIST1 smart_global; "]"; c = constr
         -> TacDecompose (l,c)
 
@@ -641,10 +626,6 @@ GEXTEND Gram
       | IDENT "revert"; l = LIST1 id_or_meta -> TacRevert l
 
       (* Constructors *)
-      | IDENT "left";   bl = with_bindings -> TacLeft  (false,bl)
-      | IDENT "eleft";  bl = with_bindings -> TacLeft  (true,bl)
-      | IDENT "right";  bl = with_bindings -> TacRight (false,bl)
-      | IDENT "eright"; bl = with_bindings -> TacRight (true,bl)
       | IDENT "split";  bl = with_bindings -> TacSplit (false,false,[bl])
       | IDENT "esplit"; bl = with_bindings -> TacSplit (true,false,[bl])
       | "exists"; bll = LIST1 opt_bindings SEP "," -> TacSplit (false,true,bll)
@@ -658,10 +639,7 @@ GEXTEND Gram
       | IDENT "econstructor"; t = OPT tactic -> TacAnyConstructor (true,t)
 
       (* Equivalence relations *)
-      | IDENT "reflexivity" -> TacReflexivity
       | IDENT "symmetry"; cl = clause_dft_concl -> TacSymmetry cl
-      | IDENT "transitivity"; c = constr -> TacTransitivity (Some c)
-      | IDENT "etransitivity" -> TacTransitivity None
 
       (* Equality and inversion *)
       | IDENT "rewrite"; l = LIST1 oriented_rewriter SEP ",";

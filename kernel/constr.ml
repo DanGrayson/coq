@@ -25,7 +25,7 @@
 
 open Util
 open Names
-
+open Univ
 
 type existential_key = Evar.t
 type metavariable = int
@@ -43,7 +43,8 @@ type case_printing =
 type case_info =
   { ci_ind        : inductive;
     ci_npar       : int;
-    ci_cstr_ndecls : int array; (* number of pattern vars of each constructor *)
+    ci_cstr_ndecls : int array; (* number of pattern vars of each constructor (with let's)*)
+    ci_cstr_nargs : int array; (* number of pattern vars of each constructor (w/o let's) *)
     ci_pp_info    : case_printing (* not interpreted by the kernel *)
   }
 
@@ -60,6 +61,10 @@ type ('constr, 'types) pfixpoint =
     (int array * int) * ('constr, 'types) prec_declaration
 type ('constr, 'types) pcofixpoint =
     int * ('constr, 'types) prec_declaration
+type 'a puniverses = 'a Univ.puniverses
+type pconstant = constant puniverses
+type pinductive = inductive puniverses
+type pconstructor = constructor puniverses
 
 (* [Var] is used for named variables and [Rel] for variables as
    de Bruijn indices. *)
@@ -74,13 +79,13 @@ type ('constr, 'types) kind_of_term =
   | Lambda    of Name.t * 'types * 'constr
   | LetIn     of Name.t * 'constr * 'types * 'constr
   | App       of 'constr * 'constr array
-  | Const     of constant
-  | Ind       of inductive
-  | Construct of constructor
+  | Const     of pconstant
+  | Ind       of pinductive
+  | Construct of pconstructor
   | Case      of case_info * 'constr * 'constr * 'constr array
   | Fix       of ('constr, 'types) pfixpoint
   | CoFix     of ('constr, 'types) pcofixpoint
-
+  | Proj      of constant * 'constr
 (* constr is the fixpoint of the previous type. Requires option
    -rectypes of the Caml compiler to be set *)
 type t = (t,t) kind_of_term
@@ -138,19 +143,29 @@ let mkApp (f, a) =
       | App (g, cl) -> App (g, Array.append cl a)
       | _ -> App (f, a)
 
+let out_punivs (a, _) = a
+let map_puniverses f (x,u) = (f x, u)
+let in_punivs a = (a, Univ.Instance.empty)
+
 (* Constructs a constant *)
-let mkConst c = Const c
+let mkConst c = Const (in_punivs c)
+let mkConstU c = Const c
+
+(* Constructs an applied projection *)
+let mkProj (p,c) = Proj (p,c)
 
 (* Constructs an existential variable *)
 let mkEvar e = Evar e
 
 (* Constructs the ith (co)inductive type of the block named kn *)
-let mkInd m = Ind m
+let mkInd m = Ind (in_punivs m)
+let mkIndU m = Ind m
 
 (* Constructs the jth constructor of the ith (co)inductive type of the
-   block named kn. The array of terms correspond to the variables
-   introduced in the section *)
-let mkConstruct c = Construct c
+   block named kn. *)
+let mkConstruct c = Construct (in_punivs c)
+let mkConstructU c = Construct c
+let mkConstructUi ((ind,u),i) = Construct ((ind,i),u)
 
 (* Constructs the term <p>Case c of c1 | c2 .. | cn end *)
 let mkCase (ci, p, c, ac) = Case (ci, p, c, ac)
@@ -224,6 +239,7 @@ let fold f acc c = match kind c with
   | Lambda (_,t,c) -> f (f acc t) c
   | LetIn (_,b,t,c) -> f (f (f acc b) t) c
   | App (c,l) -> Array.fold_left f (f acc c) l
+  | Proj (p,c) -> f acc c
   | Evar (_,l) -> Array.fold_left f acc l
   | Case (_,p,c,bl) -> Array.fold_left f (f (f acc p) c) bl
   | Fix (_,(lna,tl,bl)) ->
@@ -243,6 +259,7 @@ let iter f c = match kind c with
   | Lambda (_,t,c) -> f t; f c
   | LetIn (_,b,t,c) -> f b; f t; f c
   | App (c,l) -> f c; Array.iter f l
+  | Proj (p,c) -> f c
   | Evar (_,l) -> Array.iter f l
   | Case (_,p,c,bl) -> f p; f c; Array.iter f bl
   | Fix (_,(_,tl,bl)) -> Array.iter f tl; Array.iter f bl
@@ -264,6 +281,7 @@ let iter_with_binders g f n c = match kind c with
   | App (c,l) -> f n c; CArray.Fun1.iter f n l
   | Evar (_,l) -> CArray.Fun1.iter f n l
   | Case (_,p,c,bl) -> f n p; f n c; CArray.Fun1.iter f n bl
+  | Proj (p,c) -> f n c
   | Fix (_,(_,tl,bl)) ->
       CArray.Fun1.iter f n tl;
       CArray.Fun1.iter f (iterate g (Array.length tl) n) bl
@@ -304,6 +322,10 @@ let map f c = match kind c with
       let l' = Array.smartmap f l in
       if b'==b && l'==l then c
       else mkApp (b', l')
+  | Proj (p,t) ->
+      let t' = f t in
+      if t' == t then c
+      else mkProj (p, t')
   | Evar (e,l) ->
       let l' = Array.smartmap f l in
       if l'==l then c
@@ -324,6 +346,62 @@ let map f c = match kind c with
       let bl' = Array.smartmap f bl in
       if tl'==tl && bl'==bl then c
       else mkCoFix (ln,(lna,tl',bl'))
+
+(* Like {!map} but with an accumulator. *)
+
+let fold_map f accu c = match kind c with
+  | (Rel _ | Meta _ | Var _   | Sort _ | Const _ | Ind _
+    | Construct _) -> accu, c
+  | Cast (b,k,t) ->
+      let accu, b' = f accu b in
+      let accu, t' = f accu t in
+      if b'==b && t' == t then accu, c
+      else accu, mkCast (b', k, t')
+  | Prod (na,t,b) ->
+      let accu, b' = f accu b in
+      let accu, t' = f accu t in
+      if b'==b && t' == t then accu, c
+      else accu, mkProd (na, t', b')
+  | Lambda (na,t,b) ->
+      let accu, b' = f accu b in
+      let accu, t' = f accu t in
+      if b'==b && t' == t then accu, c
+      else accu, mkLambda (na, t', b')
+  | LetIn (na,b,t,k) ->
+      let accu, b' = f accu b in
+      let accu, t' = f accu t in
+      let accu, k' = f accu k in
+      if b'==b && t' == t && k'==k then accu, c
+      else accu, mkLetIn (na, b', t', k')
+  | App (b,l) ->
+      let accu, b' = f accu b in
+      let accu, l' = Array.smartfoldmap f accu l in
+      if b'==b && l'==l then accu, c
+      else accu, mkApp (b', l')
+  | Proj (p,t) ->
+      let accu, t' = f accu t in
+      if t' == t then accu, c
+      else accu, mkProj (p, t')
+  | Evar (e,l) ->
+      let accu, l' = Array.smartfoldmap f accu l in
+      if l'==l then accu, c
+      else accu, mkEvar (e, l')
+  | Case (ci,p,b,bl) ->
+      let accu, b' = f accu b in
+      let accu, p' = f accu p in
+      let accu, bl' = Array.smartfoldmap f accu bl in
+      if b'==b && p'==p && bl'==bl then accu, c
+      else accu, mkCase (ci, p', b', bl')
+  | Fix (ln,(lna,tl,bl)) ->
+      let accu, tl' = Array.smartfoldmap f accu tl in
+      let accu, bl' = Array.smartfoldmap f accu bl in
+      if tl'==tl && bl'==bl then accu, c
+      else accu, mkFix (ln,(lna,tl',bl'))
+  | CoFix(ln,(lna,tl,bl)) ->
+      let accu, tl' = Array.smartfoldmap f accu tl in
+      let accu, bl' = Array.smartfoldmap f accu bl in
+      if tl'==tl && bl'==bl then accu, c
+      else accu, mkCoFix (ln,(lna,tl',bl'))
 
 (* [map_with_binders g f n c] maps [f n] on the immediate
    subterms of [c]; it carries an extra data [n] (typically a lift
@@ -360,6 +438,10 @@ let map_with_binders g f l c0 = match kind c0 with
     let al' = CArray.Fun1.smartmap f l al in
     if c' == c && al' == al then c0
     else mkApp (c', al')
+  | Proj (p, t) ->
+    let t' = f l t in
+    if t' == t then c0
+    else mkProj (p, t')
   | Evar (e, al) ->
     let al' = CArray.Fun1.smartmap f l al in
     if al' == al then c0
@@ -382,18 +464,18 @@ let map_with_binders g f l c0 = match kind c0 with
     let bl' = CArray.Fun1.smartmap f l' bl in
     mkCoFix (ln,(lna,tl',bl'))
 
-(* [compare f c1 c2] compare [c1] and [c2] using [f] to compare
-   the immediate subterms of [c1] of [c2] if needed; Cast's,
+(* [compare_head_gen u s f c1 c2] compare [c1] and [c2] using [f] to compare
+   the immediate subterms of [c1] of [c2] if needed, [u] to compare universe
+   instances and [s] to compare sorts; Cast's,
    application associativity, binders name and Cases annotations are
    not taken into account *)
 
-
-let compare_head f t1 t2 =
+let compare_head_gen eq_universes eq_sorts f t1 t2 =
   match kind t1, kind t2 with
   | Rel n1, Rel n2 -> Int.equal n1 n2
   | Meta m1, Meta m2 -> Int.equal m1 m2
   | Var id1, Var id2 -> Id.equal id1 id2
-  | Sort s1, Sort s2 -> Sorts.equal s1 s2
+  | Sort s1, Sort s2 -> eq_sorts s1 s2
   | Cast (c1,_,_), _ -> f c1 t2
   | _, Cast (c2,_,_) -> f t1 c2
   | Prod (_,t1,c1), Prod (_,t2,c2) -> f t1 t2 && f c1 c2
@@ -405,9 +487,10 @@ let compare_head f t1 t2 =
     Int.equal (Array.length l1) (Array.length l2) &&
       f c1 c2 && Array.equal f l1 l2
   | Evar (e1,l1), Evar (e2,l2) -> Evar.equal e1 e2 && Array.equal f l1 l2
-  | Const c1, Const c2 -> eq_constant c1 c2
-  | Ind c1, Ind c2 -> eq_ind c1 c2
-  | Construct c1, Construct c2 -> eq_constructor c1 c2
+  | Proj (p1,c1), Proj (p2,c2) -> eq_constant p1 p2 && f c1 c2
+  | Const (c1,u1), Const (c2,u2) -> eq_constant c1 c2 && eq_universes true u1 u2
+  | Ind (c1,u1), Ind (c2,u2) -> eq_ind c1 c2 && eq_universes false u1 u2
+  | Construct (c1,u1), Construct (c2,u2) -> eq_constructor c1 c2 && eq_universes false u1 u2
   | Case (_,p1,c1,bl1), Case (_,p2,c2,bl2) ->
       f p1 p2 && f c1 c2 && Array.equal f bl1 bl2
   | Fix ((ln1, i1),(_,tl1,bl1)), Fix ((ln2, i2),(_,tl2,bl2)) ->
@@ -417,6 +500,44 @@ let compare_head f t1 t2 =
       Int.equal ln1 ln2 && Array.equal f tl1 tl2 && Array.equal f bl1 bl2
   | _ -> false
 
+let compare_head = compare_head_gen (fun _ -> Univ.Instance.equal) Sorts.equal
+
+(* [compare_head_gen_leq u s sl eq leq c1 c2] compare [c1] and [c2] using [eq] to compare
+   the immediate subterms of [c1] of [c2] for conversion if needed, [leq] for cumulativity,
+   [u] to compare universe instances and [s] to compare sorts; Cast's,
+   application associativity, binders name and Cases annotations are
+   not taken into account *)
+
+let compare_head_gen_leq eq_universes eq_sorts leq_sorts eq leq t1 t2 =
+  match kind t1, kind t2 with
+  | Rel n1, Rel n2 -> Int.equal n1 n2
+  | Meta m1, Meta m2 -> Int.equal m1 m2
+  | Var id1, Var id2 -> Int.equal (id_ord id1 id2) 0
+  | Sort s1, Sort s2 -> leq_sorts s1 s2
+  | Cast (c1,_,_), _ -> leq c1 t2
+  | _, Cast (c2,_,_) -> leq t1 c2
+  | Prod (_,t1,c1), Prod (_,t2,c2) -> eq t1 t2 && leq c1 c2
+  | Lambda (_,t1,c1), Lambda (_,t2,c2) -> eq t1 t2 && eq c1 c2
+  | LetIn (_,b1,t1,c1), LetIn (_,b2,t2,c2) -> eq b1 b2 && eq t1 t2 && leq c1 c2
+  | App (Cast(c1, _, _),l1), _ -> leq (mkApp (c1,l1)) t2
+  | _, App (Cast (c2, _, _),l2) -> leq t1 (mkApp (c2,l2))
+  | App (c1,l1), App (c2,l2) ->
+    Int.equal (Array.length l1) (Array.length l2) &&
+      eq c1 c2 && Array.equal eq l1 l2
+  | Proj (p1,c1), Proj (p2,c2) -> eq_constant p1 p2 && eq c1 c2
+  | Evar (e1,l1), Evar (e2,l2) -> Evar.equal e1 e2 && Array.equal eq l1 l2
+  | Const (c1,u1), Const (c2,u2) -> eq_constant c1 c2 && eq_universes true u1 u2
+  | Ind (c1,u1), Ind (c2,u2) -> eq_ind c1 c2 && eq_universes false u1 u2
+  | Construct (c1,u1), Construct (c2,u2) -> eq_constructor c1 c2 && eq_universes false u1 u2
+  | Case (_,p1,c1,bl1), Case (_,p2,c2,bl2) ->
+      eq p1 p2 && eq c1 c2 && Array.equal eq bl1 bl2
+  | Fix ((ln1, i1),(_,tl1,bl1)), Fix ((ln2, i2),(_,tl2,bl2)) ->
+      Int.equal i1 i2 && Array.equal Int.equal ln1 ln2
+      && Array.equal eq tl1 tl2 && Array.equal eq bl1 bl2
+  | CoFix(ln1,(_,tl1,bl1)), CoFix(ln2,(_,tl2,bl2)) ->
+      Int.equal ln1 ln2 && Array.equal eq tl1 tl2 && Array.equal eq bl1 bl2
+  | _ -> false
+
 (*******************************)
 (*  alpha conversion functions *)
 (*******************************)
@@ -424,9 +545,89 @@ let compare_head f t1 t2 =
 (* alpha conversion : ignore print names and casts *)
 
 let rec eq_constr m n =
-  (m == n) || compare_head eq_constr m n
+  (m == n) || compare_head_gen (fun _ -> Instance.equal) Sorts.equal eq_constr m n
+
+(** Strict equality of universe instances. *)
+let compare_constr = compare_head_gen (fun _ -> Instance.equal) Sorts.equal
 
 let equal m n = eq_constr m n (* to avoid tracing a recursive fun *)
+
+let eq_constr_univs univs m n =
+  if m == n then true
+  else 
+    let eq_universes _ = Univ.Instance.check_eq univs in
+    let eq_sorts s1 s2 = s1 == s2 || Univ.check_eq univs (Sorts.univ_of_sort s1) (Sorts.univ_of_sort s2) in
+    let rec eq_constr' m n = 
+      m == n ||	compare_head_gen eq_universes eq_sorts eq_constr' m n
+    in compare_head_gen eq_universes eq_sorts eq_constr' m n
+
+let leq_constr_univs univs m n =
+  if m == n then true
+  else 
+    let eq_universes _ = Univ.Instance.check_eq univs in
+    let eq_sorts s1 s2 = s1 == s2 || 
+      Univ.check_eq univs (Sorts.univ_of_sort s1) (Sorts.univ_of_sort s2) in
+    let leq_sorts s1 s2 = s1 == s2 || 
+      Univ.check_leq univs (Sorts.univ_of_sort s1) (Sorts.univ_of_sort s2) in
+    let rec eq_constr' m n = 
+      m == n ||	compare_head_gen eq_universes eq_sorts eq_constr' m n
+    in
+    let rec compare_leq m n =
+      compare_head_gen_leq eq_universes eq_sorts leq_sorts eq_constr' leq_constr' m n
+    and leq_constr' m n = m == n || compare_leq m n in
+      compare_leq m n
+
+let eq_constr_universes m n =
+  if m == n then true, UniverseConstraints.empty
+  else 
+    let cstrs = ref UniverseConstraints.empty in
+    let eq_universes strict l l' = 
+      cstrs := Univ.enforce_eq_instances_univs strict l l' !cstrs; true in
+    let eq_sorts s1 s2 = 
+      if Sorts.equal s1 s2 then true
+      else
+	(cstrs := Univ.UniverseConstraints.add 
+	   (Sorts.univ_of_sort s1, Univ.UEq, Sorts.univ_of_sort s2) !cstrs;
+	 true)
+    in
+    let rec eq_constr' m n = 
+      m == n ||	compare_head_gen eq_universes eq_sorts eq_constr' m n
+    in
+    let res = compare_head_gen eq_universes eq_sorts eq_constr' m n in
+      res, !cstrs
+
+let leq_constr_universes m n =
+  if m == n then true, UniverseConstraints.empty
+  else 
+    let cstrs = ref UniverseConstraints.empty in
+    let eq_universes strict l l' = 
+      cstrs := Univ.enforce_eq_instances_univs strict l l' !cstrs; true in
+    let eq_sorts s1 s2 = 
+      if Sorts.equal s1 s2 then true
+      else (cstrs := Univ.UniverseConstraints.add 
+	      (Sorts.univ_of_sort s1,Univ.UEq,Sorts.univ_of_sort s2) !cstrs; 
+	    true)
+    in
+    let leq_sorts s1 s2 = 
+      if Sorts.equal s1 s2 then true
+      else 
+	(cstrs := Univ.UniverseConstraints.add 
+	   (Sorts.univ_of_sort s1,Univ.ULe,Sorts.univ_of_sort s2) !cstrs; 
+	 true)
+    in
+    let rec eq_constr' m n = 
+      m == n ||	compare_head_gen eq_universes eq_sorts eq_constr' m n
+    in
+    let rec compare_leq m n =
+      compare_head_gen_leq eq_universes eq_sorts leq_sorts eq_constr' leq_constr' m n
+    and leq_constr' m n = m == n || compare_leq m n in
+    let res = compare_leq m n in
+      res, !cstrs
+
+let always_true _ _ = true
+
+let rec eq_constr_nounivs m n =
+  (m == n) || compare_head_gen (fun _ -> always_true) always_true eq_constr_nounivs m n
 
 (** We only use this function over blocks! *)
 let tag t = Obj.tag (Obj.repr t)
@@ -456,11 +657,12 @@ let constr_ord_int f t1 t2 =
     | App (Cast(c1,_,_),l1), _ -> f (mkApp (c1,l1)) t2
     | _, App (Cast(c2, _,_),l2) -> f t1 (mkApp (c2,l2))
     | App (c1,l1), App (c2,l2) -> (f =? (Array.compare f)) c1 c2 l1 l2
+    | Proj (p1,c1), Proj (p2,c2) -> (con_ord =? f) p1 p2 c1 c2
     | Evar (e1,l1), Evar (e2,l2) ->
         (Evar.compare =? (Array.compare f)) e1 e2 l1 l2
-    | Const c1, Const c2 -> con_ord c1 c2
-    | Ind ind1, Ind ind2 -> ind_ord ind1 ind2
-    | Construct ct1, Construct ct2 -> constructor_ord ct1 ct2
+    | Const (c1,u1), Const (c2,u2) -> con_ord c1 c2
+    | Ind (ind1, u1), Ind (ind2, u2) -> ind_ord ind1 ind2
+    | Construct (ct1,u1), Construct (ct2,u2) -> constructor_ord ct1 ct2
     | Case (_,p1,c1,bl1), Case (_,p2,c2,bl2) ->
         ((f =? f) ==? (Array.compare f)) p1 p2 c1 c2 bl1 bl2
     | Fix (ln1,(_,tl1,bl1)), Fix (ln2,(_,tl2,bl2)) ->
@@ -535,11 +737,13 @@ let hasheq t1 t2 =
     | LetIn (n1,b1,t1,c1), LetIn (n2,b2,t2,c2) ->
       n1 == n2 && b1 == b2 && t1 == t2 && c1 == c2
     | App (c1,l1), App (c2,l2) -> c1 == c2 && array_eqeq l1 l2
+    | Proj (p1,c1), Proj(p2,c2) -> p1 == p2 && c1 == c2
     | Evar (e1,l1), Evar (e2,l2) -> Evar.equal e1 e2 && array_eqeq l1 l2
-    | Const c1, Const c2 -> c1 == c2
-    | Ind (sp1,i1), Ind (sp2,i2) -> sp1 == sp2 && Int.equal i1 i2
-    | Construct ((sp1,i1),j1), Construct ((sp2,i2),j2) ->
-      sp1 == sp2 && Int.equal i1 i2 && Int.equal j1 j2
+    | Const (c1,u1), Const (c2,u2) -> c1 == c2 && u1 == u2
+    | Ind ((sp1,i1),u1), Ind ((sp2,i2),u2) -> 
+      sp1 == sp2 && Int.equal i1 i2 && Univ.Instance.eqeq u1 u2
+    | Construct (((sp1,i1),j1),u1), Construct (((sp2,i2),j2),u2) ->
+      sp1 == sp2 && Int.equal i1 i2 && Int.equal j1 j2 && Univ.Instance.eqeq u1 u2
     | Case (ci1,p1,c1,bl1), Case (ci2,p2,c2,bl2) ->
       ci1 == ci2 && p1 == p2 && c1 == c2 && array_eqeq bl1 bl2
     | Fix ((ln1, i1),(lna1,tl1,bl1)), Fix ((ln2, i2),(lna2,tl2,bl2)) ->
@@ -578,6 +782,8 @@ let hash_cast_kind = function
 | DEFAULTcast -> 2
 | REVERTcast -> 3
 
+let sh_instance = Univ.Instance.share
+
 (* [hashcons hash_consing_functions constr] computes an hash-consed
    representation for [constr] using [hash_consing_functions] on
    leaves. *)
@@ -612,12 +818,22 @@ let hashcons (sh_sort,sh_ci,sh_construct,sh_ind,sh_con,sh_na,sh_id) =
       | Evar (e,l) ->
 	let l, hl = hash_term_array l in
 	(Evar (e,l), combinesmall 8 (combine (Evar.hash e) hl))
-      | Const c ->
-	(Const (sh_con c), combinesmall 9 (Constant.hash c))
-      | Ind ind ->
-	(Ind (sh_ind ind), combinesmall 10 (ind_hash ind))
-      | Construct c ->
-	(Construct (sh_construct c), combinesmall 11 (constructor_hash c))
+      | Proj (p,c) ->
+        let c, hc = sh_rec c in
+	let p' = sh_con p in
+	  (Proj (p', c), combinesmall 17 (combine (Constant.hash p') hc))
+      | Const (c,u) ->
+	let c' = sh_con c in
+	let u', hu = sh_instance u in
+	(Const (c', u'), combinesmall 9 (combine (Constant.hash c) hu))
+      | Ind ((kn,i) as ind,u) ->
+	let u', hu = sh_instance u in
+	(Ind (sh_ind ind, u'), 
+	 combinesmall 10 (combine (ind_hash ind) hu))
+      | Construct ((((kn,i),j) as c,u))->
+	let u', hu = sh_instance u in
+	(Construct (sh_construct c, u'),
+	 combinesmall 11 (combine (constructor_hash c) hu))
       | Case (ci,p,c,bl) ->
 	let p, hp = sh_rec p
 	and c, hc = sh_rec c in
@@ -689,14 +905,16 @@ let rec hash t =
     | App (Cast(c, _, _),l) -> hash (mkApp (c,l))
     | App (c,l) ->
       combinesmall 7 (combine (hash_term_array l) (hash c))
+    | Proj (p,c) ->
+      combinesmall 17 (combine (Constant.hash p) (hash c))
     | Evar (e,l) ->
       combinesmall 8 (combine (Evar.hash e) (hash_term_array l))
-    | Const c ->
-      combinesmall 9 (Constant.hash c)
-    | Ind ind ->
-      combinesmall 10 (ind_hash ind)
-    | Construct c ->
-      combinesmall 11 (constructor_hash c)
+    | Const (c,u) ->
+      combinesmall 9 (combine (Constant.hash c) (Instance.hash u))
+    | Ind (ind,u) ->
+      combinesmall 10 (combine (ind_hash ind) (Instance.hash u))
+    | Construct (c,u) ->
+      combinesmall 11 (combine (constructor_hash c) (Instance.hash u))
     | Case (_ , p, c, bl) ->
       combinesmall 12 (combine3 (hash c) (hash p) (hash_term_array bl))
     | Fix (ln ,(_, tl, bl)) ->
@@ -721,6 +939,7 @@ struct
     ci.ci_ind == ci'.ci_ind &&
     Int.equal ci.ci_npar ci'.ci_npar &&
     Array.equal Int.equal ci.ci_cstr_ndecls ci'.ci_cstr_ndecls && (* we use [Array.equal] on purpose *)
+    Array.equal Int.equal ci.ci_cstr_nargs ci'.ci_cstr_nargs && (* we use [Array.equal] on purpose *)
     pp_info_equal ci.ci_pp_info ci'.ci_pp_info  (* we use (=) on purpose *)
   open Hashset.Combine
   let hash_pp_info info =
@@ -736,14 +955,37 @@ struct
     let h1 = ind_hash ci.ci_ind in
     let h2 = Int.hash ci.ci_npar in
     let h3 = Array.fold_left combine 0 ci.ci_cstr_ndecls in
-    let h4 = hash_pp_info ci.ci_pp_info in
-    combine4 h1 h2 h3 h4
+    let h4 = Array.fold_left combine 0 ci.ci_cstr_nargs in
+    let h5 = hash_pp_info ci.ci_pp_info in
+    combine5 h1 h2 h3 h4 h5
 end
 
 module Hcaseinfo = Hashcons.Make(CaseinfoHash)
 
 let case_info_hash = CaseinfoHash.hash
 
+module Hsorts =
+  Hashcons.Make(
+    struct
+      open Sorts
+
+      type t = Sorts.t
+      type u = universe -> universe
+      let hashcons huniv = function
+          Prop c -> Prop c
+        | Type u -> Type (huniv u)
+      let equal s1 s2 =
+        s1 == s2 ||
+	  match (s1,s2) with
+            (Prop c1, Prop c2) -> c1 == c2
+          | (Type u1, Type u2) -> u1 == u2
+          |_ -> false
+      let hash = function
+	| Prop Null -> 0 | Prop Pos -> 1
+	| Type u -> 2 + Universe.hash u
+    end)
+
+let hcons_sorts = Hashcons.simple_hcons Hsorts.generate hcons_univ
 let hcons_caseinfo = Hashcons.simple_hcons Hcaseinfo.generate hcons_ind
 
 let hcons =
