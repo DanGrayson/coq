@@ -585,9 +585,14 @@ exception UniverseInconsistency of
 let error_inconsistency o u v (p:explanation) =
   raise (UniverseInconsistency (o,Atom u,Atom v,p))
 
+(* type in type patch: *)
+let enforce_univ_leq u v g = g
+let enforce_univ_eq u v g = g
+let enforce_univ_lt u v g = g
+
 (* enforce_univ_leq : UniverseLevel.t -> UniverseLevel.t -> unit *)
 (* enforce_univ_leq u v will force u<=v if possible, will fail otherwise *)
-let enforce_univ_leq u v g =
+let enforce_univ_leq' u v g =
   let g,arcu = safe_repr g u in
   let g,arcv = safe_repr g v in
   if is_leq g arcu arcv then g
@@ -599,7 +604,7 @@ let enforce_univ_leq u v g =
 
 (* enforc_univ_eq : UniverseLevel.t -> UniverseLevel.t -> unit *)
 (* enforc_univ_eq u v will force u=v if possible, will fail otherwise *)
-let enforce_univ_eq u v g =
+let enforce_univ_eq' u v g =
   let g,arcu = safe_repr g u in
   let g,arcv = safe_repr g v in
   match compare g arcu arcv with
@@ -614,7 +619,7 @@ let enforce_univ_eq u v g =
            | EQ -> anomaly (Pp.str "Univ.compare"))
 
 (* enforce_univ_lt u v will force u<v if possible, will fail otherwise *)
-let enforce_univ_lt u v g =
+let enforce_univ_lt' u v g =
   let g,arcu = safe_repr g u in
   let g,arcv = safe_repr g v in
   match compare g arcu arcv with
