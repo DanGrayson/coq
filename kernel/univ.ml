@@ -1223,11 +1223,13 @@ let is_lt g arcu arcv =
 (** First, checks on universe levels *)
 
 let check_equal g u v =
+  (* Type in Type *) if true then true else
   let g, arcu = safe_repr g u in
   let _, arcv = safe_repr g v in
   arcu == arcv
 
 let check_smaller g strict u v =
+  (* Type in Type *) if true then true else
   let g, arcu = safe_repr g u in
   let g, arcv = safe_repr g v in
   if strict then
@@ -1244,6 +1246,7 @@ let check_smaller g strict u v =
 type 'a check_function = universes -> 'a -> 'a -> bool
 
 let check_equal_expr g x y =
+  (* Type in Type *) if true then true else
   x == y || (let (u, n) = x and (v, m) = y in 
 	       Int.equal n m && check_equal g u v)
 
@@ -1261,6 +1264,7 @@ let check_eq_univs g l1 l2 =
     hence a relaxed version. *)
 
 let check_eq g u v =
+  (* Type in Type *) if true then true else
   Universe.equal u v || check_eq_univs g u v
 
 let check_eq_level g u v = u == v || check_equal g u v
@@ -1399,7 +1403,9 @@ let enforce_univ_leq u v g =
   else match fast_compare g arcv arcu with
     | FastLT -> 
       (match compare g arcv arcu with
-      | LT p -> error_inconsistency Le u v (List.rev (Lazy.force p))
+      | LT p -> 
+		(* Type in Type *) if true then g else
+		error_inconsistency Le u v (List.rev (Lazy.force p))
       | _ -> anomaly (Pp.str "Univ.fast_compare"))
     | FastLE  -> merge g arcv arcu
     | FastNLE -> fst (setleq g arcu arcv)
@@ -1414,14 +1420,18 @@ let enforce_univ_eq u v g =
     | FastEQ -> g
     | FastLT ->
       (match compare g arcu arcv with
-      | LT p -> error_inconsistency Eq v u (List.rev (Lazy.force p))
+      | LT p -> 
+		(* Type in Type *) if true then g else
+		error_inconsistency Eq v u (List.rev (Lazy.force p))
       | _ -> anomaly (Pp.str "Univ.fast_compare"))
     | FastLE -> merge g arcu arcv
     | FastNLE ->
       (match fast_compare g arcv arcu with
       | FastLT -> 
 	(match compare g arcv arcu with
-	| LT p -> error_inconsistency Eq u v (List.rev (Lazy.force p))
+	| LT p -> 
+		  (* Type in Type *) if true then g else
+		  error_inconsistency Eq u v (List.rev (Lazy.force p))
 	| _ -> anomaly (Pp.str "Univ.fast_compare"))
       | FastLE -> merge g arcv arcu
       | FastNLE -> merge_disc g arcu arcv
@@ -1436,7 +1446,9 @@ let enforce_univ_lt u v g =
     | FastLE -> fst (setlt g arcu arcv)
     | FastEQ -> 
       (match compare g arcu arcv with
-      | EQ -> error_inconsistency Lt u v [(Eq,make v)]
+      | EQ -> 
+	      (* Type in Type *) if true then g else
+	      error_inconsistency Lt u v [(Eq,make v)]
       | _ -> anomaly (Pp.str "Univ.fast_compare"))
     | FastNLE ->
       match fast_compare_neq false g arcv arcu with
@@ -1444,7 +1456,9 @@ let enforce_univ_lt u v g =
       | FastEQ -> anomaly (Pp.str "Univ.compare")
       | (FastLE|FastLT) ->
 	(match compare_neq false g arcv arcu with
-	| LE p | LT p -> error_inconsistency Lt u v (List.rev (Lazy.force p))
+	| LE p | LT p -> 
+			 (* Type in Type *) if true then g else
+			 error_inconsistency Lt u v (List.rev (Lazy.force p))
 	| _ -> anomaly (Pp.str "Univ.fast_compare"))
 	  
 let empty_universes = LMap.empty
@@ -1994,6 +2008,7 @@ let constraint_add_leq v u c =
 	Constraint.add (x,Lt,y) c
       else if j <= -1 (* n = m+k, v+k <= u <-> v+(k-1) < u *) then
 	if Level.equal x y then (* u+(k+1) <= u *)
+          (* Type in Type *) if true then c else
 	  raise (UniverseInconsistency (Le, Universe.tip v, Universe.tip u, []))
 	else anomaly (Pp.str"Unable to handle arbitrary u+k <= v constraints")
       else if j = 0 then
@@ -2024,6 +2039,7 @@ let enforce_eq_level u v c =
   (* We discard trivial constraints like u=u *)
   if Level.equal u v then c 
   else if Level.apart u v then
+    (* Type in Type *) if true then c else
     error_inconsistency Eq u v []
   else Constraint.add (u,Eq,v) c
 

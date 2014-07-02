@@ -384,7 +384,9 @@ let process_universe_constraints univs vars alg templ cstrs =
 		    Univ.Level.is_small l || Univ.LMap.mem l !vars) 
 		      (Univ.Universe.levels l) then
 		      Univ.enforce_leq l r local
-		   else raise (Univ.UniverseInconsistency (Univ.Le, l, r, [])))
+		   else 
+			(* Type in Type *) if true then local else
+			raise (Univ.UniverseInconsistency (Univ.Le, l, r, [])))
 		else if Univ.LSet.mem rl templ && Univ.Universe.is_level l then
 		  unify_universes fo l Univ.UEq r local
 		else
@@ -410,15 +412,18 @@ let process_universe_constraints univs vars alg templ cstrs =
 		  (* Two rigid/global levels, none of them being local,
 		     one of them being Prop/Set, disallow *)
 		  if Univ.Level.is_small l' || Univ.Level.is_small r' then
+		    (* Type in Type *) if true then () else
 		    raise (Univ.UniverseInconsistency (Univ.Eq, l, r, []))
 		  else
 		    if fo then 
+                      (* Type in Type *) if true then () else
 		      raise UniversesDiffer
 	      in
 	        Univ.enforce_eq_level l' r' local
            | _, _ (* One of the two is algebraic or global *) -> 
 	     if Univ.check_eq univs l r then local
 	     else 
+               (* Type in Type *) if true then local else
 	       raise UniversesDiffer
   in
   let local = 
@@ -1131,7 +1136,9 @@ let set_leq_sort evd s1 s2 =
       match s1, s2 with
       | Prop c, Prop c' -> 
 	  if c == Null && c' == Pos then evd
-	  else (raise (Univ.UniverseInconsistency (Univ.Le, u1, u2, [])))
+	  else (
+		(* Type in Type *) if true then evd else
+		raise (Univ.UniverseInconsistency (Univ.Le, u1, u2, [])))
       | _, _ -> 
         add_universe_constraints evd (Univ.UniverseConstraints.singleton (u1,Univ.ULe,u2))
 	    
