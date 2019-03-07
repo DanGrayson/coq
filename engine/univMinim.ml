@@ -219,6 +219,10 @@ let minimize_univ_variables ctx us algs left right cstrs =
                 we instantiate it with its lower bound if it is a
                 different level, otherwise we keep it. *)
              let lower = LMap.remove l lower in
+             if not (LSet.mem l ctx)
+             then let acc = remove_alg l acc
+                  in instantiate_with_lbound u lbound lower ~alg:false ~enforce:true acc
+             else
              if not (Level.equal l u) then
                (* Should check that u does not
                   have upper constraints that are not already in right *)
@@ -352,7 +356,7 @@ let normalize_context_set g ctx us algs weak =
       noneqs Constraint.empty
   in
   (* Compute the left and right set of flexible variables, constraints
-     mentionning other variables remain in noneqs. *)
+     mentioning other variables remain in noneqs. *)
   let noneqs, ucstrsl, ucstrsr =
     Constraint.fold (fun (l,d,r as cstr) (noneq, ucstrsl, ucstrsr) ->
       let lus = LMap.mem l us and rus = LMap.mem r us in
